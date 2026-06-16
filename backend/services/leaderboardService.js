@@ -249,7 +249,6 @@ async function getTopGainers({ limit = 50, page = 1, search, branch, year } = {}
     },
     { $match: { gain: { $gt: 0 } } },
     { $sort: { gain: -1 } },
-    { $limit: parseInt(limit) },
     {
       $lookup: {
         from: 'students',
@@ -279,8 +278,7 @@ async function getTopGainers({ limit = 50, page = 1, search, branch, year } = {}
     });
   }
 
-  // Sort by highest gain after filtering
-// 4. Use $facet to split data (Page Results) and metadata (Total Count)
+  // Split filtered results into page data plus total count.
   pipeline.push({
     $facet: {
       metadata: [{ $count: 'total' }],

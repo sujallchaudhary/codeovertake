@@ -2,7 +2,7 @@ const studentService = require('../services/studentService');
 const { fetchNsutBranches, searchNsutStudents } = require('../utils/nsut');
 const { getPlatform, getAllPlatforms, calculateTotalScore } = require('../platforms');
 
-const PLATFORM_KEYS = ['github', 'leetcode', 'codeforces', 'codechef'];
+const PLATFORM_KEYS = getAllPlatforms().map((platform) => platform.key);
 
 /**
  * Strip usernames from a student doc, replacing with hasUsername boolean.

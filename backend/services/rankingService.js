@@ -55,14 +55,28 @@ async function calculateRankings(today = null) {
     }
   }
 
-  // Save all students and update snapshots
-  for (const s of students) {
-    await s.save();
-    if (today) {
-      await Snapshot.findOneAndUpdate(
-        { rollno: s.rollno, date: today },
-        { ranks: s.ranks },
-      );
+  const studentOps = students.map((student) => ({
+    updateOne: {
+      filter: { rollno: student.rollno },
+      update: { $set: { ranks: student.ranks } },
+    },
+  }));
+
+  if (studentOps.length > 0) {
+    await Student.bulkWrite(studentOps, { ordered: false });
+  }
+
+  if (today) {
+    const snapshotOps = students.map((student) => ({
+      updateOne: {
+        filter: { rollno: student.rollno, date: today },
+        update: { $set: { ranks: student.ranks } },
+        upsert: true,
+      },
+    }));
+
+    if (snapshotOps.length > 0) {
+      await Snapshot.bulkWrite(snapshotOps, { ordered: false });
     }
   }
 
