@@ -39,8 +39,68 @@ async function getLeaderboard({ year, branch, sortBy = 'total', order = 'desc', 
     Student.countDocuments(filter),
   ]);
 
+  let enrichedStudents = students;
+
+  try {
+    // Grab only the two most recent dates (Today and Yesterday) from the Snapshot collection so we can compare the current score against the most recent historical state.
+
+    const dates = await Snapshot.aggregate([
+      { $group: { _id: '$date' } },
+      { $sort: { _id: -1 } },
+      { $limit: 2 },
+    ]);
+
+    if (dates.length >= 2) {
+      const [latestDate, prevDate] = [dates[0]._id, dates[1]._id];
+
+      // Fetch only relevant previous snapshots
+      const rollnos = students.map((s) => s.rollno);
+
+      const prevSnapshots = await Snapshot.find({
+        date: prevDate,
+        rollno: { $in: rollnos },
+      }).select('rollno ranks');
+
+      const prevMap = new Map();
+      prevSnapshots.forEach((s) => {
+        prevMap.set(s.rollno, s.ranks);
+      });
+
+      enrichedStudents = students.map((s) => {
+        const prev = prevMap.get(s.rollno);
+        const curr = s.ranks || {};
+
+        return {
+          ...s.toObject(),
+
+          rankChange: prev ? prev.overall - curr.overall : 0,
+          yearRankChange: prev ? prev.yearWise - curr.yearWise : 0,
+          branchRankChange: prev ? prev.branchWise - curr.branchWise : 0,
+        };
+      });
+    } else {
+      // No previous snapshot → all neutral
+      enrichedStudents = students.map((s) => ({
+        ...s.toObject(),
+        rankChange: 0,
+        yearRankChange: 0,
+        branchRankChange: 0,
+      }));
+    }
+  } catch (err) {
+    console.error('[RANK CHANGE ERROR]', err);
+
+    //return without breaking API
+    enrichedStudents = students.map((s) => ({
+      ...s.toObject(),
+      rankChange: 0,
+      yearRankChange: 0,
+      branchRankChange: 0,
+    }));
+  }
+
   return {
-    students,
+    students: enrichedStudents,
     pagination: { page: parseInt(page), limit: lim, total, pages: Math.ceil(total / lim) },
   };
 }
