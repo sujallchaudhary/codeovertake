@@ -276,7 +276,7 @@ export interface StudentResults {
   }>;
 }
 
-const RESULTHUB_API_BASE = "https://resulthubnsut.sujal.info";
+const RESULTHUB_API_BASE = "https://api.resulthubnsut.com";
 
 export async function fetchStudentResults(rollno: string): Promise<StudentResults | null> {
   try {
