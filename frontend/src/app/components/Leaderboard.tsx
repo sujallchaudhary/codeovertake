@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useSearchParams } from "react-router";
-import { Search, Rocket, Zap, TrendingUp, ArrowUpRight, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp } from "lucide-react";
+import { Search, Rocket, Zap, TrendingUp, ArrowUpRight, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, TrendingDown, Minus } from "lucide-react";
 import { platforms, type Platform } from "../mockData";
 import { fetchLeaderboard, fetchPlatformLeaderboard, fetchFilters, fetchTopGainers } from "../api";
 import { GithubIcon, LeetcodeIcon, CodeforcesIcon, CodechefIcon } from "./PlatformIcons";
@@ -566,6 +566,8 @@ export function Leaderboard() {
                   ? idx + 1
                   : displayTab === "all"
                   ? (selectedBranch !== "all" && selectedYear !== "all"
+                    ? idx + 1 
+                    : selectedBranch !== "all"
                     ? student.ranks?.branchWise
                     : selectedYear !== "all"
                     ? student.ranks?.yearWise
@@ -574,9 +576,43 @@ export function Leaderboard() {
                   : hasFilters
                   ? student.filteredRank || idx + 1
                   : student.ranks?.[displayTab] || idx + 1;
+
+                const rankChange =  (
+                  displayTab === "all"
+                    ? (selectedBranch !== "all" && selectedYear !== "all"
+                        ? null
+                        : selectedBranch !== "all"
+                        ? student.branchRankChange
+                        : selectedYear !== "all"
+                        ? student.yearRankChange
+                        : student.rankChange)
+                    : student.rankChange
+                    ) ?? 0;
+                
                 return (
                   <tr key={`${student.rollno}-${idx}`} className="transition-colors hover:bg-[#111111]">
-                    <td className="px-4 py-3 font-['JetBrains_Mono'] text-[#888888]">{rank}</td>
+                    <td className="px-4 py-3 font-['JetBrains_Mono'] text-[#888888]">
+                     <div className="flex items-center gap-2">
+                       <span>{rank}</span>
+    
+                       <div className={`flex items-center text-[10px] ${rankChange > 0 ? "text-[#4ade80]" : rankChange < 0 ? "text-[#f87171]" : "text-[#555555]"}`}>
+                         {rankChange > 0 ? (
+                           <>
+                             <TrendingUp className="h-3 w-3 mr-0.5" />
+                             {Math.abs(rankChange)}
+                           </>
+                         ) : rankChange < 0 ? (
+                           <>
+                             <TrendingDown className="h-3 w-3 mr-0.5" />
+                             {Math.abs(rankChange)}
+                           </>
+                         ) : (
+                           <Minus className="text-gray-400" size={15} strokeWidth={4} />
+                         )}
+                       </div>
+                     </div>
+                   </td>
+
                     <td className="w-[160px] max-w-[160px] px-4 py-3">
                       <Link
                         to={`/student/${student.rollno}`}
