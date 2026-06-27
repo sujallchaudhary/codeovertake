@@ -67,6 +67,7 @@ const studentSchema = new mongoose.Schema({
       totalProblemsSolved: { type: Number, default: 0 },
     },
     lastUpdated: Date,
+    lastFetchFailed: { type: Boolean, default: false },
   },
 
   scores: {

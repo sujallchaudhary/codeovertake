@@ -8,6 +8,7 @@ const leaderboardRoutes = require('./routes/leaderboard');
 const adminRoutes = require('./routes/admin');
 const analyticsRoutes = require('./routes/analytics');
 const contributorRoutes = require('./routes/contributors');
+const Meta = require('./models/Meta');
 
 const app = express();
 
@@ -29,8 +30,17 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/contributors', contributorRoutes);
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res, next) => {
+  try {
+    const lastCronRun = await Meta.findOne({ key: 'lastCronRun' }).lean();
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      lastCronRun: lastCronRun?.value || null,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Global error handler (must be last)

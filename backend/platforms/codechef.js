@@ -3,7 +3,7 @@ const cheerio = require('cheerio');
 
 const CC_URL = 'https://www.codechef.com/users';
 
-async function fetchStats(username) {
+async function scrapeStats(username) {
   if (!username) return null;
   try {
     const res = await axios.get(`${CC_URL}/${encodeURIComponent(username)}`, {
@@ -64,7 +64,26 @@ async function fetchStats(username) {
   } catch (error) {
     if (error.response?.status === 404) return null;
     console.error(`CodeChef fetch error for ${username}:`, error.message);
+    throw error;
+  }
+}
+
+async function fetchStats(username) {
+  try {
+    return await scrapeStats(username);
+  } catch {
     return null;
+  }
+}
+
+async function fetchStatsWithStatus(username) {
+  if (!username) return { stats: null, lastFetchFailed: false };
+
+  try {
+    const stats = await scrapeStats(username);
+    return { stats, lastFetchFailed: false };
+  } catch (error) {
+    return { stats: null, lastFetchFailed: error.response?.status !== 404 };
   }
 }
 
@@ -99,6 +118,7 @@ module.exports = {
   key: 'codechef',
   label: 'CodeChef',
   fetchStats,
+  fetchStatsWithStatus,
   validateUsername,
   calculateScore,
   profileUrl: (username) => `https://www.codechef.com/users/${username}`,

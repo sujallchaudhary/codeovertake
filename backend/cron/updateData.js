@@ -1,5 +1,6 @@
 const Student = require('../models/Student');
 const Snapshot = require('../models/Snapshot');
+const Meta = require('../models/Meta');
 const { getAllPlatforms, calculateTotalScore, buildHasUsernameFilter } = require('../platforms');
 const { calculateRankings } = require('../services/rankingService');
 
@@ -66,9 +67,11 @@ async function updateAllStudents() {
   // Map: rollno -> { github: stats, leetcode: stats, ... }
   const statsMap = new Map();
   const heatmapMap = new Map();
+  const fetchStatusMap = new Map();
   for (const s of students) {
     statsMap.set(s.rollno, {});
     heatmapMap.set(s.rollno, {});
+    fetchStatusMap.set(s.rollno, {});
   }
 
   console.log('[CRON] Fetching platform stats...');
@@ -79,11 +82,23 @@ async function updateAllStudents() {
     const tasks = students
       .filter((s) => s[platform.key]?.username)
       .map((student) => () =>
-        platform.fetchStats(student[platform.key].username).then((stats) => {
-          statsMap.get(student.rollno)[platform.key] = stats;
-        }).catch((err) => {
-          console.error(`[CRON] ${platform.key} error for ${student.rollno}:`, err.message);
-        })
+        Promise.resolve(
+          platform.key === 'codechef' && typeof platform.fetchStatsWithStatus === 'function'
+            ? platform.fetchStatsWithStatus(student[platform.key].username)
+            : platform.fetchStats(student[platform.key].username),
+        )
+          .then((result) => {
+            if (platform.key === 'codechef' && result && typeof result === 'object' && 'stats' in result) {
+              statsMap.get(student.rollno)[platform.key] = result.stats;
+              fetchStatusMap.get(student.rollno)[platform.key] = !!result.lastFetchFailed;
+              return;
+            }
+            statsMap.get(student.rollno)[platform.key] = result;
+          })
+          .catch((err) => {
+            console.error(`[CRON] ${platform.key} error for ${student.rollno}:`, err.message);
+            statsMap.get(student.rollno)[platform.key] = null;
+          })
       );
 
     console.log(`[CRON]   ${platform.key}: ${tasks.length} users (concurrency: ${concurrency})`);
@@ -128,9 +143,14 @@ async function updateAllStudents() {
 
       for (const p of platforms) {
         const stats = fetched[p.key];
-        if (stats) {
+        if (stats != null) {
           student[p.key].stats = stats;
           student[p.key].lastUpdated = new Date();
+        } else if (p.key === 'codechef') {
+          student[p.key].lastFetchFailed = !!fetchStatusMap.get(student.rollno)?.codechef;
+        }
+        if (p.key === 'codechef' && stats != null) {
+          student[p.key].lastFetchFailed = false;
         }
         student.scores[p.key] = p.calculateScore(student[p.key].stats);
       }
@@ -161,6 +181,12 @@ async function updateAllStudents() {
 
   // Phase 3: Recalculate rankings
   await calculateRankings(today);
+
+  await Meta.findOneAndUpdate(
+    { key: 'lastCronRun' },
+    { key: 'lastCronRun', value: new Date(), updatedAt: new Date() },
+    { upsert: true, new: true }
+  );
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`[CRON] Update completed in ${elapsed}s`);
