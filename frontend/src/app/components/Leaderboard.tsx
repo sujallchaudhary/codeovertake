@@ -416,6 +416,8 @@ export function Leaderboard() {
               ? idx + 1
               : displayTab === "all"
               ? (selectedBranch !== "all" && selectedYear !== "all"
+                ? idx + 1 
+                : selectedBranch !== "all"
                 ? student.ranks?.branchWise
                 : selectedYear !== "all"
                 ? student.ranks?.yearWise
@@ -424,6 +426,18 @@ export function Leaderboard() {
               : hasFilters
               ? student.filteredRank || idx + 1
               : student.ranks?.[displayTab] || idx + 1;
+
+            const rankChange =  (
+                  displayTab === "all"
+                    ? (selectedBranch !== "all" && selectedYear !== "all"
+                        ? null
+                        : selectedBranch !== "all"
+                        ? student.branchRankChange
+                        : selectedYear !== "all"
+                        ? student.yearRankChange
+                        : student.rankChange)
+                    : student.rankChange
+                    ) ?? 0;
             return (
               <Link
                 key={`${student.rollno}-${idx}`}
@@ -432,8 +446,27 @@ export function Leaderboard() {
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-[#1e1e1e] font-['JetBrains_Mono'] text-sm text-[#888888]">
-                      {rank}
+                    <div className="flex flex-col items-center gap-1.5 mt-0.5">
+                      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-[#1e1e1e] font-['JetBrains_Mono'] text-sm text-[#888888]">
+                        {rank}
+                      </div>
+                      
+                      {/* Rank Change Indicator */}
+                      <div className={`flex items-center text-[10px] font-['JetBrains_Mono'] ${rankChange > 0 ? "text-[#4ade80]" : rankChange < 0 ? "text-[#f87171]" : "text-[#555555]"}`}>
+                        {rankChange > 0 ? (
+                          <>
+                            <TrendingUp className="h-3 w-3 mr-0.5" />
+                            {Math.abs(rankChange)}
+                          </>
+                        ) : rankChange < 0 ? (
+                          <>
+                            <TrendingDown className="h-3 w-3 mr-0.5" />
+                            {Math.abs(rankChange)}
+                          </>
+                        ) : (
+                          <Minus className="text-gray-400" size={14} strokeWidth={4} />
+                        )}
+                      </div>
                     </div>
                     <div>
                       <div className="font-['Archivo'] text-sm" title={student.name}>{student.name.length > 15 ? student.name.slice(0, 15) + "..." : student.name}</div>
