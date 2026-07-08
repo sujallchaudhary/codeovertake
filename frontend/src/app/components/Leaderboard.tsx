@@ -418,7 +418,7 @@ export function Leaderboard() {
               ? (selectedBranch !== "all" && selectedYear !== "all"
                 ? idx + 1 
                 : selectedBranch !== "all"
-                ? student.ranks?.branchWise
+                ? idx + 1
                 : selectedYear !== "all"
                 ? student.ranks?.yearWise
                 : student.ranks?.overall)
@@ -601,7 +601,7 @@ export function Leaderboard() {
                   ? (selectedBranch !== "all" && selectedYear !== "all"
                     ? idx + 1 
                     : selectedBranch !== "all"
-                    ? student.ranks?.branchWise
+                    ? idx + 1
                     : selectedYear !== "all"
                     ? student.ranks?.yearWise
                     : student.ranks?.overall)
