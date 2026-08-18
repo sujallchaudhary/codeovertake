@@ -31,24 +31,15 @@ async function fetchStats(username) {
       page++;
     }
 
+    // Contributions: all-time total, not the default rolling 12-month window.
+    // The default `contributionsCollection` only covers the last 365 days, so
+    // old contributions silently age out every day and scores keep dropping.
+    // If the GraphQL fetch fails, return null so the previous stats are kept
+    // instead of overwriting contributions with 0.
     let contributions = 0;
     if (process.env.GITHUB_TOKEN) {
-      try {
-        const query = `query($username: String!) {
-          user(login: $username) {
-            contributionsCollection {
-              contributionCalendar { totalContributions }
-            }
-          }
-        }`;
-        const gqlRes = await axios.post(
-          GITHUB_GRAPHQL,
-          { query, variables: { username } },
-          { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }, timeout: 10000 }
-        );
-        contributions =
-          gqlRes.data?.data?.user?.contributionsCollection?.contributionCalendar?.totalContributions || 0;
-      } catch (_) {}
+      contributions = await fetchAllTimeContributions(username);
+      if (contributions == null) return null;
     }
 
     return {
@@ -60,6 +51,56 @@ async function fetchStats(username) {
   } catch (error) {
     if (error.response?.status === 404) return null;
     console.error(`GitHub fetch error for ${username}:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Sum totalContributions across every year the user has been active.
+ * Returns null on any failure so callers can avoid overwriting good data.
+ */
+async function fetchAllTimeContributions(username) {
+  const headers = { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` };
+  try {
+    const yearsRes = await axios.post(
+      GITHUB_GRAPHQL,
+      {
+        query: `query($username: String!) {
+          user(login: $username) { contributionsCollection { contributionYears } }
+        }`,
+        variables: { username },
+      },
+      { headers, timeout: 10000 }
+    );
+    if (yearsRes.data?.errors?.length) throw new Error(yearsRes.data.errors[0].message);
+    const years = yearsRes.data?.data?.user?.contributionsCollection?.contributionYears;
+    if (!Array.isArray(years)) throw new Error('missing contributionYears');
+    if (years.length === 0) return 0;
+
+    // One aliased query covering all years at once.
+    const fields = years
+      .map(
+        (y) => `y${y}: contributionsCollection(from: "${y}-01-01T00:00:00Z", to: "${y}-12-31T23:59:59Z") {
+          contributionCalendar { totalContributions }
+        }`
+      )
+      .join('\n');
+    const totalsRes = await axios.post(
+      GITHUB_GRAPHQL,
+      { query: `query($username: String!) { user(login: $username) { ${fields} } }`, variables: { username } },
+      { headers, timeout: 15000 }
+    );
+    if (totalsRes.data?.errors?.length) throw new Error(totalsRes.data.errors[0].message);
+    const user = totalsRes.data?.data?.user;
+    if (!user) throw new Error('missing user in totals response');
+
+    let total = 0;
+    for (const y of years) {
+      total += user[`y${y}`]?.contributionCalendar?.totalContributions || 0;
+    }
+    return total;
+  } catch (error) {
+    console.error(`GitHub contributions fetch error for ${username}:`, error.message);
     return null;
   }
 }
