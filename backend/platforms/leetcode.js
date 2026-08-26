@@ -118,6 +118,7 @@ module.exports = {
     { label: 'Hard', statKey: 'leetcode.stats.hardSolved' },
     { label: 'Total', statKey: 'leetcode.stats.totalSolved' },
     { label: 'Contest', statKey: 'leetcode.stats.contestRating' },
+    { label: 'Contests', statKey: 'leetcode.stats.contestsAttended' },
   ],
   profileStats: [
     { label: 'Total Solved', statKey: 'stats.totalSolved' },
