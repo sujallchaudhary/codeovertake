@@ -21,6 +21,7 @@ const platformColumns: Record<string, { label: string; statKey: string; getValue
     { label: "Hard", statKey: "leetcode.stats.hardSolved", getValue: (s) => s.leetcode?.stats?.hardSolved ?? 0 },
     { label: "Total", statKey: "leetcode.stats.totalSolved", getValue: (s) => s.leetcode?.stats?.totalSolved ?? 0 },
     { label: "Contest", statKey: "leetcode.stats.contestRating", getValue: (s) => s.leetcode?.stats?.contestRating ?? 0 },
+    { label: "Contests", statKey: "leetcode.stats.contestsAttended", getValue: (s) => s.leetcode?.stats?.contestsAttended ?? 0 },
   ],
   codeforces: [
     { label: "Rating", statKey: "codeforces.stats.rating", getValue: (s) => s.codeforces?.stats?.rating ?? 0 },
