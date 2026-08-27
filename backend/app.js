@@ -26,8 +26,21 @@ const app = express();
 
 // Security
 app.use(helmet());
+
+/**
+ * Allowed origins: the configured frontend, plus any browser extension.
+ * The extension's popup sends `Origin: chrome-extension://<id>` and the id
+ * differs per install, so it is matched by scheme rather than listed.
+ */
+const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin(origin, callback) {
+    // Same-origin/server-to-server requests send no Origin header
+    if (!origin) return callback(null, true);
+    if (origin === allowedOrigin) return callback(null, true);
+    if (/^(chrome-extension|moz-extension):\/\//.test(origin)) return callback(null, true);
+    return callback(null, false);
+  },
   // DELETE/PATCH are needed by the workspace, notes, sheets and portfolio APIs
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }));

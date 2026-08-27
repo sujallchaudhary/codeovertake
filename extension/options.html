@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>CodeOvertake — Settings</title>
+  <style>
+    body { width: 460px; padding: 20px; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <span class="logo">Code<span class="accent">Overtake</span></span>
+  </header>
+
+  <p class="muted small">
+    Connect this extension to your CodeOvertake account. Open the web app, go to
+    <strong>Edit profile → Extension</strong> and copy your pairing token.
+  </p>
+
+  <label class="label" for="apiBase">API base URL</label>
+  <input id="apiBase" class="input" placeholder="http://localhost:5000/api" />
+  <p class="muted small" style="margin-top: 4px;">
+    Include the <code>/api</code> suffix. Use your deployed backend URL in production.
+  </p>
+
+  <label class="label" for="token">Pairing token</label>
+  <input id="token" class="input" type="password" placeholder="48-character token" />
+
+  <div class="actions">
+    <button id="test" class="btn">Test connection</button>
+    <button id="save" class="btn primary">Save</button>
+  </div>
+
+  <p id="message" class="message hidden"></p>
+
+  <script src="shared.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

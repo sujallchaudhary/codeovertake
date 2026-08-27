@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>CodeOvertake</title>
+</head>
+<body>
+  <header class="header">
+    <span class="logo">Code<span class="accent">Overtake</span></span>
+    <a id="openOptions" class="link" href="#">Settings</a>
+  </header>
+
+  <!-- Shown when the current tab is not a recognised problem page -->
+  <section id="unsupported" class="state hidden">
+    <p class="muted">
+      This page is not a problem page we recognise.
+      Open a problem on LeetCode, Codeforces, CodeChef, GeeksforGeeks, AtCoder,
+      HackerRank, InterviewBit, Code360 or SPOJ and try again.
+    </p>
+  </section>
+
+  <!-- Shown when no pairing token has been configured -->
+  <section id="needsToken" class="state hidden">
+    <p class="muted">
+      Paste your pairing token to connect this extension to your account.
+      Find it under <strong>Edit profile → Extension</strong>.
+    </p>
+    <button id="goToOptions" class="btn primary">Open settings</button>
+  </section>
+
+  <!-- Main flow -->
+  <section id="main" class="state hidden">
+    <div id="problemCard" class="card">
+      <div class="row">
+        <span id="platformBadge" class="badge"></span>
+        <span id="difficultyBadge" class="badge hidden"></span>
+      </div>
+      <div id="problemTitle" class="title">Reading page…</div>
+      <div id="topics" class="topics"></div>
+    </div>
+
+    <div id="statusRow" class="row spread hidden">
+      <span id="trackedState" class="muted small"></span>
+    </div>
+
+    <label class="label" for="tags">Tags</label>
+    <input id="tags" class="input" placeholder="Tricky, Revise next week" />
+
+    <label class="label" for="note">Note (optional)</label>
+    <textarea id="note" class="input textarea" rows="3" placeholder="Key insight, edge cases, template…"></textarea>
+
+    <label class="label" for="sheet">Add to sheet</label>
+    <select id="sheet" class="input">
+      <option value="">Workspace only</option>
+    </select>
+
+    <div class="actions">
+      <button id="saveUnsolved" class="btn">Save</button>
+      <button id="saveSolved" class="btn primary">Save as solved</button>
+    </div>
+
+    <div class="actions">
+      <button id="star" class="btn ghost">☆ Star</button>
+      <a id="openApp" class="btn ghost" target="_blank" rel="noopener">Open workspace</a>
+    </div>
+  </section>
+
+  <p id="message" class="message hidden"></p>
+
+  <script src="shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
