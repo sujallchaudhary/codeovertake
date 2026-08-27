@@ -176,7 +176,7 @@ codeovertake/
 │   │   ├── data/                 # Sheet and company-kit definitions
 │   │   ├── previewDb.js          # Per-PR database URI / name / drop
 │   │   └── runUpdate.js          # Manual data refresh trigger
-│   ├── test/                     # run.js aggregator + 5 suites (343 checks)
+│   ├── test/                     # run.js aggregator + 6 suites (367 checks)
 │   ├── server.js                 # Express server entry
 │   └── .env.example
 ├── .github/workflows/            # ci.yml, pr preview, cleanup, production deploy
@@ -260,6 +260,7 @@ Runs on `http://localhost:5173`.
 | `NSUT_API_URL` | External API for student lookup by roll number | No |
 | `CLERK_SECRET_KEY` | Clerk Backend API key | **Yes** (for accounts) |
 | `CLERK_JWT_KEY` | Clerk instance PEM public key — makes token verification networkless | Recommended |
+| `CLERK_AUTHORIZED_PARTIES` | Extra origins whose session tokens are accepted (see troubleshooting) | No |
 | `CLERK_WEBHOOK_SECRET` | Svix signing secret for the Clerk webhook | Recommended |
 | `INSTITUTE_EMAIL_DOMAIN` | e.g. `nsut.ac.in`. Enables the email path for claiming | No |
 | `CONTEST_CRON_SCHEDULE` | Cron expression for contest sync | No (default: every 6h) |
@@ -304,6 +305,52 @@ Set up the webhook in the Clerk Dashboard pointing at
 `https://your-api/api/webhooks/clerk`, subscribed to `user.created`,
 `user.updated` and `user.deleted`. Locally, the **Refresh** button under
 *Edit profile → Platforms* pulls from Clerk on demand instead.
+
+### `{"error":"Authentication required"}` while signed in
+
+Two very different causes, and it is worth ruling out the first one before
+touching any config.
+
+**1. You opened the API URL in a browser tab.** Clerk session tokens travel as an
+`Authorization: Bearer` header on `fetch` calls from the app. A browser address
+bar sends no such header, so `http://localhost:5000/api/auth/me` returns 401 for
+everyone, always, signed in or not. It is not a usable way to check your session.
+Use the app itself, or the browser devtools **Network** tab to inspect the request
+the app makes. From a terminal:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:5000/api/auth/me
+```
+
+…where `<token>` comes from `await window.Clerk.session.getToken()` in the console.
+
+**2. The origin your frontend is served from is not an authorized party.** Tokens
+carry an `azp` claim naming the origin that requested them, and it is compared
+against `FRONTEND_URL` + the literal entries of `ALLOWED_ORIGINS` +
+`CLERK_AUTHORIZED_PARTIES`. If the frontend runs anywhere other than
+`FRONTEND_URL` — a different dev port, a preview host, `127.0.0.1` instead of
+`localhost` — **every** authenticated request 401s even though sign-in worked.
+
+The backend prints the accepted list at boot and logs a specific diagnostic the
+first time it rejects a validly signed token:
+
+```
+[AUTH] Accepted token origins (azp): http://localhost:5173
+[CLERK] Rejected a validly signed session token because its azp claim is not an authorized party.
+[CLERK]   token azp: "http://localhost:3999"
+[CLERK]   accepted:  http://localhost:5173
+[CLERK] Set FRONTEND_URL (or CLERK_AUTHORIZED_PARTIES) to http://localhost:3999 …
+```
+
+Other things the logs will now tell you outright, rather than flattening into a
+generic 401:
+
+| Symptom | Meaning |
+|---|---|
+| `reason: token-invalid-signature` | Frontend and backend point at different Clerk instances — publishable key and secret key are from different applications |
+| `reason: secret-key-invalid`, any `jwk-*` | The server cannot verify *anything*. Requests get **503**, not 401, because fixing your credentials cannot help |
+| `Neither CLERK_SECRET_KEY nor CLERK_JWT_KEY is set` | Sign-in will look fine in the browser and every API call will 401 |
+| `reason: token-expired` | Normal and self-correcting; the client refreshes |
 
 ## Claiming a leaderboard profile
 
@@ -590,7 +637,7 @@ Three workflows in `.github/workflows/`:
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | every PR, pushes to `master` | Lint + 343 tests, frontend typecheck + build, both Docker images build. On a PR it then deploys a beta preview. |
+| `ci.yml` | every PR, pushes to `master` | Lint + 367 tests, frontend typecheck + build, both Docker images build. On a PR it then deploys a beta preview. |
 | `pr-cleanup.yml` | PR closed or merged | Removes the preview container, drops its database, deletes the image tag. |
 | `deploy.yml` | CI succeeds on `master` | Builds, pushes, deploys production, health-checks, rolls back on failure. |
 
@@ -681,7 +728,7 @@ the required status check either way.
 ### Tests
 
 ```bash
-npm test --prefix backend            # all 343
+npm test --prefix backend            # all 367
 npm test --prefix backend -- units   # just the fast pure-function suite
 npm test --prefix backend -- admin   # just the admin panel suite
 npm run lint --prefix backend        # parse every file

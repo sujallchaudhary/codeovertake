@@ -4,12 +4,46 @@ const connectDB = require('./config/db');
 const app = require('./app');
 const { updateAllStudents } = require('./cron/updateData');
 const { syncContests } = require('./services/contestService');
+const clerkService = require('./services/clerkService');
 
 const PORT = process.env.PORT || 5000;
+
+/**
+ * Prints the auth configuration at boot.
+ *
+ * A signed-in user getting "Authentication required" is almost always an origin
+ * or key mismatch rather than a code problem, and neither is visible from the
+ * outside. Printing the effective values once makes it a glance instead of an
+ * investigation.
+ */
+function reportAuthConfig() {
+  const parties = clerkService.authorizedParties();
+  const keys = [
+    process.env.CLERK_SECRET_KEY && 'CLERK_SECRET_KEY',
+    process.env.CLERK_JWT_KEY && 'CLERK_JWT_KEY',
+  ].filter(Boolean);
+
+  if (!keys.length) {
+    console.warn(
+      '[AUTH] Neither CLERK_SECRET_KEY nor CLERK_JWT_KEY is set. Sign-in will '
+      + 'appear to work in the browser, but every authenticated API request will '
+      + 'return 401.',
+    );
+  } else {
+    console.log(`[AUTH] Clerk configured via ${keys.join(' + ')}`);
+  }
+
+  console.log(`[AUTH] Accepted token origins (azp): ${parties.join(', ')}`);
+  console.log(
+    '[AUTH] The frontend origin must appear above. If it does not, set '
+    + 'FRONTEND_URL or CLERK_AUTHORIZED_PARTIES.',
+  );
+}
 
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    reportAuthConfig();
   });
 
   /**
