@@ -6,11 +6,18 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "update:ranks": "node scripts/runRankUpdate.js"
+    "update:ranks": "node scripts/runRankUpdate.js",
+    "update:data": "node scripts/runUpdate.js",
+    "seed:content": "node scripts/seedContent.js",
+    "seed:sheets": "node scripts/seedContent.js --sheets",
+    "seed:companies": "node scripts/seedContent.js --companies",
+    "seed:catalog": "node scripts/seedContent.js --catalog",
+    "test": "node test/run.js",
+    "lint": "node --check server.js && node scripts/checkSyntax.js"
   },
   "dependencies": {
+    "@clerk/backend": "^3.16.12",
     "axios": "^1.7.0",
-    "bcrypt": "^6.0.0",
     "cheerio": "^1.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
@@ -19,9 +26,11 @@
     "express-validator": "^7.0.0",
     "helmet": "^7.1.0",
     "mongoose": "^8.2.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "svix": "^2.1.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "mongodb-memory-server": "^10.2.1"
   }
 }

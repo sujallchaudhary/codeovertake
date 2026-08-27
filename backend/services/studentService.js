@@ -3,6 +3,7 @@ const Snapshot = require('../models/Snapshot');
 const { getAllPlatforms, calculateTotalScore } = require('../platforms');
 const { lookupNsutStudent, fetchNsutBranches } = require('../utils/nsut');
 const { parseRollNo } = require('../utils/parseRollNo');
+const { assertCanEditStudent } = require('./claimService');
 
 const platforms = getAllPlatforms();
 
@@ -156,8 +157,12 @@ async function getStudentByRollNo(rollno) {
 /**
  * Update platform usernames for a student.
  * Validates new usernames before saving.
+ *
+ * @param {string} rollno
+ * @param {Object} usernameData
+ * @param {Object|null} actingUser the signed-in account, when there is one
  */
-async function updateStudentUsernames(rollno, usernameData) {
+async function updateStudentUsernames(rollno, usernameData, actingUser = null) {
   const student = await Student.findOne({ rollno: rollno.toUpperCase() });
   if (!student) {
     const err = new Error('Student not found');
@@ -165,8 +170,18 @@ async function updateStudentUsernames(rollno, usernameData) {
     throw err;
   }
 
-  // Cooldown: block edits within 24 hours of last edit
-  if (student.lastEditedAt) {
+  /**
+   * Ownership gate. A claimed profile is editable only by its owner; an
+   * unclaimed one keeps the original open-with-cooldown behaviour so nobody who
+   * has not made an account yet is locked out. Throws 403 for a claimed record
+   * being edited by anyone else.
+   */
+  const access = assertCanEditStudent(student, actingUser);
+
+  // The 24h cooldown exists to stop drive-by edits of records nobody owns. Once
+  // a profile is claimed, the owner is editing their own data, so it no longer
+  // applies.
+  if (access === 'open' && student.lastEditedAt) {
     const elapsed = Date.now() - student.lastEditedAt.getTime();
     const cooldownMs = 24 * 60 * 60 * 1000; // 24 hours
     if (elapsed < cooldownMs) {
@@ -270,13 +285,16 @@ async function updateStudentUsernames(rollno, usernameData) {
  * @param {string} rollno
  * @param {number} index — index in usernameHistory array to restore from
  */
-async function restoreUsernames(rollno, index) {
+async function restoreUsernames(rollno, index, actingUser = null) {
   const student = await Student.findOne({ rollno: rollno.toUpperCase() });
   if (!student) {
     const err = new Error('Student not found');
     err.statusCode = 404;
     throw err;
   }
+
+  // Same ownership rule as editing
+  const access = assertCanEditStudent(student, actingUser);
 
   if (!student.usernameHistory || student.usernameHistory.length === 0) {
     const err = new Error('No username history to restore from');
@@ -290,8 +308,8 @@ async function restoreUsernames(rollno, index) {
     throw err;
   }
 
-  // Cooldown check
-  if (student.lastEditedAt) {
+  // Cooldown check (unclaimed records only - see updateStudentUsernames)
+  if (access === 'open' && student.lastEditedAt) {
     const elapsed = Date.now() - student.lastEditedAt.getTime();
     const cooldownMs = 24 * 60 * 60 * 1000;
     if (elapsed < cooldownMs) {

@@ -1,0 +1,146 @@
+name: Deploy production
+
+# Runs after a merge to master. CI runs on the same push, so this workflow waits
+# for it to succeed rather than duplicating the checks.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  # Manual re-deploy, e.g. to roll forward after fixing host config
+  workflow_dispatch:
+
+# Never let two deploys race for the same container
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    name: Build, push and deploy
+    # workflow_run fires on failure too, so gate on the conclusion
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # For workflow_run, check out the exact commit CI validated
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Check the deploy host is configured
+        id: guard
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          if [ -z "${DEPLOY_HOST}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DEPLOY_HOST is not set, so nothing was deployed."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve image tags
+        id: image
+        if: steps.guard.outputs.configured == 'true'
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          REPO="${GITHUB_REPOSITORY,,}"
+          echo "sha_tag=ghcr.io/${REPO}-backend:${SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=ghcr.io/${REPO}-backend:latest" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.guard.outputs.configured == 'true'
+
+      - name: Log in to GHCR
+        if: steps.guard.outputs.configured == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        if: steps.guard.outputs.configured == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          # Both tags: :latest for convenience, the sha tag so a rollback has
+          # something concrete to point at.
+          tags: |
+            ${{ steps.image.outputs.sha_tag }}
+            ${{ steps.image.outputs.latest_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_SSH_PORT || '22' }}
+          IMAGE: ${{ steps.image.outputs.sha_tag }}
+          APP_PORT: ${{ vars.PRODUCTION_PORT || '6754' }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_JWT_KEY: ${{ secrets.CLERK_JWT_KEY }}
+          CLERK_WEBHOOK_SECRET: ${{ secrets.CLERK_WEBHOOK_SECRET }}
+          GH_API_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          NSUT_API_URL: ${{ vars.NSUT_API_URL }}
+          INSTITUTE_EMAIL_DOMAIN: ${{ vars.INSTITUTE_EMAIL_DOMAIN }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          install -m 600 /dev/null key
+          printf '%s\n' "${SSH_KEY}" > key
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+          SSH="ssh -i key -p ${DEPLOY_PORT} ${DEPLOY_USER}@${DEPLOY_HOST}"
+          echo "${REGISTRY_TOKEN}" | $SSH "docker login ghcr.io -u ${GITHUB_ACTOR} --password-stdin"
+
+          # production-up.sh health-checks the new container and rolls back to the
+          # previous image if it does not come up.
+          $SSH \
+            "IMAGE='${IMAGE}' \
+             PORT='${APP_PORT}' \
+             MONGODB_URI='${MONGODB_URI}' \
+             CLERK_SECRET_KEY='${CLERK_SECRET_KEY}' \
+             CLERK_JWT_KEY='${CLERK_JWT_KEY}' \
+             CLERK_WEBHOOK_SECRET='${CLERK_WEBHOOK_SECRET}' \
+             GITHUB_TOKEN='${GH_API_TOKEN}' \
+             ADMIN_SECRET='${ADMIN_SECRET}' \
+             NSUT_API_URL='${NSUT_API_URL}' \
+             INSTITUTE_EMAIL_DOMAIN='${INSTITUTE_EMAIL_DOMAIN}' \
+             FRONTEND_URL='${FRONTEND_URL}' \
+             ALLOWED_ORIGINS='${ALLOWED_ORIGINS}' \
+             bash -s" < deploy/production-up.sh
+
+          rm -f key
+
+      - name: Verify the public endpoint
+        if: steps.guard.outputs.configured == 'true' && vars.PRODUCTION_URL != ''
+        run: |
+          # The script already checked from inside the host; this proves the
+          # reverse proxy and DNS are serving the new build too.
+          for attempt in $(seq 1 10); do
+            if curl -fsS --max-time 10 "${{ vars.PRODUCTION_URL }}/api/health"; then
+              echo "Public health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Public health check failed at ${{ vars.PRODUCTION_URL }}/api/health"
+          exit 1

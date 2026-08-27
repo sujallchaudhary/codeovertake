@@ -107,7 +107,7 @@ export function HeadOn() {
   const [showSearch, setShowSearch] = useState(false);
   const [playerHeatmaps, setPlayerHeatmaps] = useState<Record<string, Record<string, Record<string, number>>>>({});
   const searchRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Close search dropdown on outside click
   useEffect(() => {

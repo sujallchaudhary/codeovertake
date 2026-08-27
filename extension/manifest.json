@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "CodeOvertake",
+  "version": "1.0.0",
+  "description": "Save coding problems to your CodeOvertake workspace without leaving the problem page.",
+  "permissions": ["activeTab", "storage", "tabs"],
+  "host_permissions": [
+    "https://leetcode.com/*",
+    "https://www.geeksforgeeks.org/*",
+    "https://practice.geeksforgeeks.org/*",
+    "https://codeforces.com/*",
+    "https://www.codechef.com/*",
+    "https://atcoder.jp/*",
+    "https://www.hackerrank.com/*",
+    "https://www.interviewbit.com/*",
+    "https://www.naukri.com/*",
+    "https://www.spoj.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
+  "action": {
+    "default_title": "Save to CodeOvertake",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  }
+}

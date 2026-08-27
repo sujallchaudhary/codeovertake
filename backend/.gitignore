@@ -1,5 +1,11 @@
 node_modules/
 .env
 .env.local
-data/
-scripts/
+
+# Local student-data exports (roll lists etc.) must never be committed.
+# Previously this file ignored `scripts/` and `data/` wholesale, which silently
+# excluded committed *code* under scripts/ too - so only the data files are
+# ignored now, anchored where a stray match cannot swallow a source directory.
+/data/
+*.csv
+*.xlsx

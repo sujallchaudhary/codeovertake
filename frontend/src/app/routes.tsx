@@ -8,6 +8,20 @@ import { About } from "./components/About";
 import { HeadOn } from "./components/HeadOn";
 import { Analytics } from "./components/Analytics";
 
+// Tracker / portfolio / contest-manager features
+import { Login, Signup } from "./components/Auth";
+import { ClaimProfile } from "./components/ClaimProfile";
+import { Contests } from "./components/Contests";
+import { Workspace } from "./components/Workspace";
+import { Notes } from "./components/Notes";
+import { Revision } from "./components/Revision";
+import { Sheets } from "./components/Sheets";
+import { SheetDetail } from "./components/SheetDetail";
+import { Companies, CompanyKit } from "./components/Companies";
+import { Portfolio } from "./components/Portfolio";
+import { EditProfile } from "./components/EditProfile";
+import { Admin } from "./components/admin/Admin";
+
 export const router = createBrowserRouter([
   {
     path: "/",
@@ -20,6 +34,41 @@ export const router = createBrowserRouter([
       { path: "headon", Component: HeadOn },
       { path: "analytics", Component: Analytics },
       { path: "about", Component: About },
+
+      /**
+       * Splat paths: Clerk renders its multi-step flows (SSO callback, second
+       * factor, email verification) as nested routes under the base URL, so
+       * anything narrower would 404 mid-sign-in.
+       */
+      { path: "login/*", Component: Login },
+      { path: "signup/*", Component: Signup },
+
+      // Attach an existing leaderboard profile to this account
+      { path: "claim", Component: ClaimProfile },
+
+      // Question tracker
+      { path: "workspace", Component: Workspace },
+      { path: "notes", Component: Notes },
+      { path: "revision", Component: Revision },
+
+      // Sheets
+      { path: "sheets", Component: Sheets },
+      { path: "sheets/:slug", Component: SheetDetail },
+
+      // Company interview kits
+      { path: "companies", Component: Companies },
+      { path: "companies/:slug", Component: CompanyKit },
+
+      // Contest tracker
+      { path: "contests", Component: Contests },
+
+      // Portfolio: /portfolio is your own, /u/:handle is anyone's
+      { path: "portfolio", Component: Portfolio },
+      { path: "u/:handle", Component: Portfolio },
+      { path: "settings", Component: EditProfile },
+
+      // Maintainer panel. The component checks the role, and so does every endpoint.
+      { path: "admin", Component: Admin },
     ],
   },
 ]);

@@ -1,0 +1,40 @@
+# Optional reverse proxy for preview deployments.
+#
+# Without this, a preview is reachable at http://<host>:<port> — fine for curl,
+# Postman or a locally-run frontend, but a browser will refuse to let an HTTPS
+# page (a Vercel preview) call a plain-HTTP API. Fronting previews with Caddy
+# gives each PR its own HTTPS subdomain and removes that limitation.
+#
+# Prerequisites
+#   1. A wildcard DNS record:  *.preview.api.example.com  ->  <host ip>
+#   2. A DNS-01 capable Caddy build, because wildcard certificates cannot be
+#      issued over HTTP-01. With Cloudflare:
+#         xcaddy build --with github.com/caddy-dns/cloudflare
+#   3. Set PREVIEW_URL_TEMPLATE in your GitHub repo variables to
+#         https://pr-{PR}.preview.api.example.com
+#      The deploy workflow substitutes {PR} and posts the result on the PR.
+#
+# Port convention must match PREVIEW_PORT_BASE in the workflow (default 7000),
+# so PR #19 is served from 127.0.0.1:7019.
+
+*.preview.api.example.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# pr-19.preview.api.example.com -> 127.0.0.1:7019
+	@pr header_regexp host Host ^pr-(\d+)\.preview\.api\.example\.com$
+	handle @pr {
+		reverse_proxy 127.0.0.1:{re.host.1}
+	}
+
+	# Anything that is not a pr-<n> host gets a clear answer rather than a 502
+	handle {
+		respond "Unknown preview host" 404
+	}
+}
+
+# Production API, for reference. Matches PORT in deploy/production-up.sh.
+api.example.com {
+	reverse_proxy 127.0.0.1:6754
+}

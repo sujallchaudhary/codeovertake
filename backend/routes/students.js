@@ -1,6 +1,6 @@
 const express = require('express');
 const { body, param } = require('express-validator');
-const { asyncHandler, validate } = require('../middlewares');
+const { asyncHandler, validate, optionalAuth } = require('../middlewares');
 const ctrl = require('../controllers/studentController');
 const { getAllPlatforms } = require('../platforms');
 
@@ -55,8 +55,11 @@ router.get(
 );
 
 // PUT /api/students/:rollno/usernames
+// optionalAuth, not requireAuth: an unclaimed record is still editable without
+// an account (original behaviour), while a claimed one needs its owner signed in.
 router.put(
   '/:rollno/usernames',
+  optionalAuth,
   [
     param('rollno').trim().notEmpty(),
     ...platforms.map((p) => body(p.key).optional({ values: 'falsy' }).trim()),
@@ -68,6 +71,7 @@ router.put(
 // POST /api/students/:rollno/restore
 router.post(
   '/:rollno/restore',
+  optionalAuth,
   [
     param('rollno').trim().notEmpty(),
     body('index').isInt({ min: 0 }).withMessage('History index is required'),

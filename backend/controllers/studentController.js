@@ -113,14 +113,20 @@ const getStudent = async (req, res) => {
   res.json(stripUsernames(student));
 };
 
+// `req.user` is populated by optionalAuth. It is required for records that have
+// been claimed, and ignored for the unclaimed ones that still edit openly.
 const updateUsernames = async (req, res) => {
-  const student = await studentService.updateStudentUsernames(req.params.rollno, req.body);
+  const student = await studentService.updateStudentUsernames(
+    req.params.rollno, req.body, req.user || null,
+  );
   res.json({ message: 'Usernames updated successfully', student: stripUsernames(student) });
 };
 
 const restoreUsernames = async (req, res) => {
   const index = parseInt(req.body.index);
-  const student = await studentService.restoreUsernames(req.params.rollno, index);
+  const student = await studentService.restoreUsernames(
+    req.params.rollno, index, req.user || null,
+  );
   res.json({ message: 'Usernames restored successfully', student: stripUsernames(student) });
 };
 

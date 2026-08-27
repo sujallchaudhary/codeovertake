@@ -1,0 +1,157 @@
+/* Matches the CodeOvertake dark theme so the popup feels part of the product. */
+:root {
+  --bg: #0a0a0a;
+  --panel: #111111;
+  --border: #1e1e1e;
+  --text: #ffffff;
+  --muted: #888888;
+  --accent: #4ade80;
+  --danger: #ff4444;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 330px;
+  margin: 0;
+  padding: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.logo {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 14px;
+}
+
+.accent { color: var(--accent); }
+
+.link {
+  color: var(--muted);
+  font-size: 11px;
+  text-decoration: none;
+}
+.link:hover { color: var(--text); }
+
+.hidden { display: none !important; }
+
+.muted { color: var(--muted); line-height: 1.5; }
+.small { font-size: 11px; }
+
+.card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.row { display: flex; align-items: center; gap: 6px; }
+.row.spread { justify-content: space-between; margin-bottom: 10px; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #1a1a1a;
+  color: var(--muted);
+}
+
+.title {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.topics {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topics span {
+  background: #1a1a1a;
+  color: #aaaaaa;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 10px;
+}
+
+.label {
+  display: block;
+  margin: 10px 0 4px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #666666;
+}
+
+.input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+}
+.input:focus { outline: none; border-color: var(--accent); }
+.textarea { resize: vertical; font-family: ui-monospace, "JetBrains Mono", monospace; }
+
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.btn {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000000;
+}
+.btn.primary:hover:not(:disabled) { opacity: 0.9; }
+
+.btn.ghost { color: var(--muted); }
+.btn.ghost.active { color: #f59e0b; border-color: #f59e0b; }
+
+.message {
+  margin: 10px 0 0;
+  padding: 7px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.message.success { background: rgba(74, 222, 128, 0.12); color: var(--accent); }
+.message.error { background: rgba(255, 68, 68, 0.12); color: #ff8888; }
