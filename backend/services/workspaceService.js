@@ -69,12 +69,16 @@ async function addQuestion(userId, data = {}) {
       existing.starred = true;
       touched = true;
     }
-    if (data.status === 'solved' && existing.status !== 'solved') {
-      await setStatus(userId, existing._id, 'solved');
-      const refreshed = await TrackedQuestion.findById(existing._id).populate('problem').lean();
-      return { question: decorate(refreshed), created: false };
-    }
+    // Persist before any early return, otherwise a request that both tags a
+    // question and marks it solved (the extension's main flow) loses the tags.
     if (touched) await existing.save();
+
+    if (data.status === 'solved' && existing.status !== 'solved') {
+      return {
+        question: (await setStatus(userId, existing._id, 'solved')).question,
+        created: false,
+      };
+    }
 
     const populated = await TrackedQuestion.findById(existing._id).populate('problem').lean();
     return { question: decorate(populated), created: false };

@@ -100,6 +100,18 @@ async function recountAndSave(sheet) {
 }
 
 /**
+ * Recomputes followerCount from the join collection.
+ *
+ * Deriving it beats `$inc`: concurrent follows racing on the unique index would
+ * otherwise double-count, and any drift would be permanent.
+ */
+async function syncFollowerCount(sheetId) {
+  const followerCount = await SheetFollow.countDocuments({ sheet: sheetId });
+  await Sheet.updateOne({ _id: sheetId }, { $set: { followerCount } });
+  return followerCount;
+}
+
+/**
  * Replaces problem ids with full problem docs and folds in the caller's
  * progress, so the frontend renders a sheet in one request.
  */
@@ -365,6 +377,9 @@ async function createSheet(userId, data = {}) {
 
 async function updateSheet(user, idOrSlug, data = {}) {
   const sheet = await findSheet(idOrSlug);
+  // Curated sheets have no owner, so isOwner already rejects them; this is an
+  // explicit guard so the intent survives any future change to ownership rules.
+  if (sheet.isCurated) throw httpError(403, 'Curated sheets cannot be edited');
   // Only the owner can change settings; collaborators edit content only
   if (!isOwner(sheet, user._id)) {
     throw httpError(403, 'Only the sheet owner can change its settings');
@@ -393,6 +408,7 @@ async function updateSheet(user, idOrSlug, data = {}) {
 
 async function deleteSheet(user, idOrSlug) {
   const sheet = await findSheet(idOrSlug);
+  if (sheet.isCurated) throw httpError(403, 'Curated sheets cannot be deleted');
   if (!isOwner(sheet, user._id)) {
     throw httpError(403, 'Only the sheet owner can delete it');
   }
@@ -703,9 +719,10 @@ async function followSheet(user, idOrSlug) {
   try {
     await SheetFollow.create({ user: user._id, sheet: sheet._id });
   } catch (err) {
+    // Unique index race: someone already created it, so do not count it twice
     if (err.code !== 11000) throw err;
   }
-  await Sheet.updateOne({ _id: sheet._id }, { $inc: { followerCount: 1 } });
+  await syncFollowerCount(sheet._id);
 
   // Seed the workspace so the user can immediately mark things done
   const problemIds = collectProblemIds(sheet);
@@ -723,9 +740,7 @@ async function followSheet(user, idOrSlug) {
 async function unfollowSheet(user, idOrSlug) {
   const sheet = await findSheet(idOrSlug);
   const deleted = await SheetFollow.findOneAndDelete({ user: user._id, sheet: sheet._id });
-  if (deleted) {
-    await Sheet.updateOne({ _id: sheet._id }, { $inc: { followerCount: -1 } });
-  }
+  if (deleted) await syncFollowerCount(sheet._id);
   return {
     message: 'Unfollowed. Your solved questions are still in My Workspace.',
     isFollowing: false,

@@ -1,9 +1,23 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { body, param, query } = require('express-validator');
 const { asyncHandler, validate, optionalAuth } = require('../middlewares');
 const ctrl = require('../controllers/problemController');
 
 const router = express.Router();
+
+/**
+ * Resolving a URL triggers an outbound fetch to the target platform, so it is
+ * rate limited to keep anonymous callers from using us to hammer LeetCode (or
+ * to enumerate pages through us).
+ */
+const resolveLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Too many lookups, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Literal paths before /:id
 router.get(
@@ -25,6 +39,7 @@ router.get('/platforms', asyncHandler(ctrl.platforms));
 // preview card can render before the user commits to saving it.
 router.post(
   '/resolve',
+  resolveLimiter,
   optionalAuth,
   [body('url').trim().notEmpty().withMessage('url is required')],
   validate,

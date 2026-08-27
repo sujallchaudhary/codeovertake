@@ -221,14 +221,32 @@ async function githubOAuth(code) {
   return issueSession(user);
 }
 
-/** Builds the URL the frontend sends the browser to for GitHub SSO. */
+/**
+ * Builds the URL the frontend sends the browser to for GitHub SSO.
+ *
+ * The caller-supplied redirect_uri is only honoured when it points at our own
+ * frontend; otherwise an attacker could have GitHub deliver the authorization
+ * code to a host they control.
+ */
 function githubAuthorizeUrl(redirectUri) {
   const clientId = process.env.GITHUB_OAUTH_CLIENT_ID;
   if (!clientId) throw httpError(500, 'GitHub OAuth is not configured on this server');
+
+  const configured = process.env.GITHUB_OAUTH_REDIRECT_URI || '';
+  const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+  let redirect = configured;
+  if (redirectUri) {
+    if (String(redirectUri).startsWith(frontend)) redirect = redirectUri;
+    else {
+      throw httpError(400, 'redirect_uri must point at this application');
+    }
+  }
+
   const params = new URLSearchParams({
     client_id: clientId,
     scope: 'read:user user:email public_repo',
-    redirect_uri: redirectUri || process.env.GITHUB_OAUTH_REDIRECT_URI || '',
+    redirect_uri: redirect,
   });
   return { url: `https://github.com/login/oauth/authorize?${params.toString()}` };
 }

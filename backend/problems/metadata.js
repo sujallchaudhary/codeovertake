@@ -137,14 +137,52 @@ function cleanPageTitle(raw) {
 }
 
 /**
+ * Hosts the generic scraper is allowed to fetch.
+ *
+ * `POST /api/problems/resolve` is reachable without authentication, so without
+ * an allowlist it would be a server-side request forgery primitive: any caller
+ * could make the backend GET an arbitrary URL (cloud metadata endpoints, private
+ * network hosts) and read the response title back. Only the problem sites we
+ * actually support are fetchable; anything else falls back to a slug-derived
+ * title with no network call at all.
+ */
+const SCRAPEABLE_HOSTS = new Set([
+  'atcoder.jp', 'www.atcoder.jp',
+  'www.hackerrank.com', 'hackerrank.com',
+  'www.interviewbit.com', 'interviewbit.com',
+  'www.naukri.com', 'naukri.com',
+  'www.codingninjas.com', 'codingninjas.com',
+  'www.spoj.com', 'spoj.com',
+  'www.hackerearth.com', 'hackerearth.com',
+  'www.codechef.com', 'codechef.com',
+  'www.geeksforgeeks.org', 'geeksforgeeks.org', 'practice.geeksforgeeks.org',
+]);
+
+function isScrapeableUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    return SCRAPEABLE_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch (_err) {
+    return false;
+  }
+}
+
+/**
  * Best-effort scrape for platforms with no usable API. Reads the <h1>/<title>
  * and looks for a difficulty word near the standard markers.
+ *
+ * Refuses any host outside SCRAPEABLE_HOSTS.
  */
 async function fetchGenericMetadata(url) {
+  if (!isScrapeableUrl(url)) {
+    throw new Error(`Refusing to fetch metadata from an unsupported host: ${url}`);
+  }
+
   const res = await axios.get(url, {
     timeout: TIMEOUT,
     headers: { 'User-Agent': UA, 'Accept-Language': 'en' },
-    maxRedirects: 4,
+    maxRedirects: 2,
   });
 
   const $ = cheerio.load(res.data);
@@ -227,6 +265,10 @@ async function fetchProblemMetadata(ref) {
     topics: [],
     partial: true,
   };
+
+  // Unrecognised hosts are still trackable, but we never fetch them: see
+  // SCRAPEABLE_HOSTS above for why.
+  if (ref.platform === 'other') return fallback;
 
   try {
     let meta = null;
@@ -336,6 +378,7 @@ module.exports = {
   fetchCodeforcesMetadata,
   fetchGfgMetadata,
   fetchGenericMetadata,
+  isScrapeableUrl,
   searchLeetcodeProblems,
   listAllCodeforcesProblems,
 };

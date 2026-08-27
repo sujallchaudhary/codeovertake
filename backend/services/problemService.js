@@ -14,6 +14,9 @@ const {
 
 // Re-enrich metadata at most once a month; problem titles rarely change.
 const METADATA_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// A partial result (title fell back to the slug) is worth retrying sooner, but
+// not on every request - the platform may simply have been down.
+const PARTIAL_METADATA_TTL_MS = 24 * 60 * 60 * 1000;
 
 function escapeRegex(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -43,9 +46,12 @@ async function resolveByUrl(url, options = {}) {
 
   let problem = await Problem.findOne({ platform: ref.platform, slug: ref.slug });
 
-  const isStale = problem
-    && (!problem.metadataFetchedAt
-      || Date.now() - problem.metadataFetchedAt.getTime() > METADATA_TTL_MS);
+  // Two TTLs so a permanently-unfetchable problem is not re-scraped every hit
+  const age = problem?.metadataFetchedAt
+    ? Date.now() - problem.metadataFetchedAt.getTime()
+    : Infinity;
+  const ttl = problem?.metadataPartial ? PARTIAL_METADATA_TTL_MS : METADATA_TTL_MS;
+  const isStale = age > ttl;
 
   if (problem && !options.refresh && !isStale) return problem;
 
@@ -54,26 +60,41 @@ async function resolveByUrl(url, options = {}) {
   const update = {
     platform: ref.platform,
     slug: ref.slug,
-    title: meta.title,
     url: ref.canonicalUrl,
-    difficulty: meta.difficulty,
-    topics: meta.topics || [],
-    // Only stamp the TTL when we actually got real data back
-    metadataFetchedAt: meta.partial ? null : new Date(),
+    // Stamped even for partial results, so the retry respects the shorter TTL
+    metadataFetchedAt: new Date(),
+    metadataPartial: Boolean(meta.partial),
   };
-  if (meta.rating !== undefined) update.rating = meta.rating;
-  if (meta.externalId !== undefined) update.externalId = meta.externalId;
-  if (meta.isPremium !== undefined) update.isPremium = meta.isPremium;
-  if (meta.acceptanceRate !== undefined) update.acceptanceRate = meta.acceptanceRate;
 
   if (!problem) {
-    problem = await Problem.create(update);
+    // First sighting: take whatever we have, including the slug-derived title
+    problem = await Problem.create({
+      ...update,
+      title: meta.title,
+      difficulty: meta.difficulty,
+      topics: meta.topics || [],
+      rating: meta.rating || 0,
+      externalId: meta.externalId || '',
+      isPremium: Boolean(meta.isPremium),
+      acceptanceRate: meta.acceptanceRate || 0,
+    });
   } else {
-    // Never downgrade good stored data with a partial re-fetch
-    if (meta.partial) {
-      delete update.title;
-      if (update.difficulty === 'unrated') delete update.difficulty;
-      if (!update.topics.length) delete update.topics;
+    // Never downgrade good stored data with a partial re-fetch: only fields the
+    // fetch actually resolved are allowed to overwrite what is already there.
+    if (!meta.partial) {
+      update.title = meta.title;
+      update.difficulty = meta.difficulty;
+      update.topics = meta.topics || [];
+      if (meta.rating !== undefined) update.rating = meta.rating;
+      if (meta.externalId !== undefined) update.externalId = meta.externalId;
+      if (meta.isPremium !== undefined) update.isPremium = meta.isPremium;
+      if (meta.acceptanceRate !== undefined) update.acceptanceRate = meta.acceptanceRate;
+    } else {
+      // Partial: still accept genuinely new signal, never clobber existing
+      if (meta.difficulty && meta.difficulty !== 'unrated' && problem.difficulty === 'unrated') {
+        update.difficulty = meta.difficulty;
+      }
+      if (meta.topics?.length && !problem.topics.length) update.topics = meta.topics;
     }
     Object.assign(problem, update);
     await problem.save();
@@ -186,7 +207,9 @@ async function searchProblems(query = {}) {
       update: {
         $set: {
           ...p,
+          // Straight from LeetCode's own listing, so this is authoritative
           metadataFetchedAt: new Date(),
+          metadataPartial: false,
         },
       },
       upsert: true,
@@ -238,7 +261,8 @@ async function upsertProblems(rows) {
   const ops = rows.map((row) => ({
     updateOne: {
       filter: { platform: row.platform, slug: row.slug },
-      update: { $set: { ...row, metadataFetchedAt: new Date() } },
+      // Seed rows come from official platform listings, so never partial
+      update: { $set: { ...row, metadataFetchedAt: new Date(), metadataPartial: false } },
       upsert: true,
     },
   }));

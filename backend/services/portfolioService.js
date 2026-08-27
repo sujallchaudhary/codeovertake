@@ -100,17 +100,23 @@ async function syncPlatforms(userId, options = {}) {
   );
 
   const results = await Promise.allSettled(
-    connected.map(async (platform) => {
-      const stats = await platform.fetchStats(user.platforms[platform.key].username);
-      return { key: platform.key, stats, platform };
-    }),
+    connected.map((platform) => platform.fetchStats(user.platforms[platform.key].username)),
   );
 
   const perPlatform = {};
-  for (const result of results) {
-    if (result.status !== 'fulfilled') continue;
-    const { key, stats, platform } = result.value;
+  results.forEach((result, index) => {
+    const platform = connected[index];
+    const key = platform.key;
 
+    // A thrown adapter is a failure too, and must still be flagged
+    if (result.status !== 'fulfilled') {
+      user.platforms[key].lastFetchFailed = true;
+      perPlatform[key] = { ok: false, error: result.reason?.message || 'fetch failed' };
+      console.error(`[PORTFOLIO] ${key} sync failed: ${result.reason?.message}`);
+      return;
+    }
+
+    const stats = result.value;
     if (stats) {
       user.platforms[key].stats = stats;
       user.platforms[key].score = platform.calculateScore(stats);
@@ -122,7 +128,7 @@ async function syncPlatforms(userId, options = {}) {
       user.platforms[key].lastFetchFailed = true;
       perPlatform[key] = { ok: false };
     }
-  }
+  });
 
   const cScore = computeCScore(user);
   user.cScore = { ...cScore, updatedAt: new Date() };

@@ -19,7 +19,10 @@ router.post(
   '/signup',
   credentialLimiter,
   [
-    body('email').isEmail().withMessage('Valid email required').normalizeEmail(),
+    // Deliberately not normalizeEmail(): it strips Gmail dots, which the
+    // GitHub OAuth path does not do, so the two would create separate accounts
+    // for the same person. Both paths lowercase + trim in authService instead.
+    body('email').isEmail().withMessage('Valid email required'),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
     body('name').trim().notEmpty().withMessage('Name is required'),
     body('handle').optional({ values: 'falsy' }).trim(),
@@ -33,7 +36,7 @@ router.post(
   '/login',
   credentialLimiter,
   [
-    body('email').isEmail().withMessage('Valid email required').normalizeEmail(),
+    body('email').isEmail().withMessage('Valid email required'),
     body('password').notEmpty().withMessage('Password is required'),
   ],
   validate,

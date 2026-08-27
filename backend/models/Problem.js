@@ -48,8 +48,14 @@ const problemSchema = new mongoose.Schema({
   isPremium: { type: Boolean, default: false },
   acceptanceRate: { type: Number, default: 0 },
 
-  // Set when metadata was successfully enriched from the platform's API
+  // When metadata was last *attempted*, successfully or not
   metadataFetchedAt: { type: Date, default: null },
+  /**
+   * True when the last fetch could not produce real metadata (title fell back to
+   * the slug). Tracked separately from metadataFetchedAt so a partial result is
+   * retried on a shorter TTL rather than re-fetched on every single request.
+   */
+  metadataPartial: { type: Boolean, default: false },
 }, {
   timestamps: true,
 });

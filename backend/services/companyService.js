@@ -113,17 +113,57 @@ async function getCompanyKit(slug, query = {}, user = null) {
   const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
 
   const sortMap = {
-    frequency: { 'companies.frequency': -1, title: 1 },
-    difficulty: { difficulty: 1, title: 1 },
+    // `frequency` is projected below from *this* company's tag. Sorting on the
+    // raw `companies.frequency` path would rank by whichever tag in the array
+    // happens to be highest, which for a problem asked by many companies is not
+    // this company's number at all.
+    frequency: { frequency: -1, title: 1 },
+    difficulty: { difficultyRank: 1, title: 1 },
     title: { title: 1 },
   };
   const sort = sortMap[query.sortBy] || sortMap.frequency;
 
-  const [problems, total, companyMeta] = await Promise.all([
-    Problem.find(filter).sort(sort).skip((page - 1) * limit).limit(limit).lean(),
-    Problem.countDocuments(filter),
+  const pipeline = [
+    { $match: filter },
+    {
+      $addFields: {
+        companyTag: {
+          $first: {
+            $filter: {
+              input: { $ifNull: ['$companies', []] },
+              as: 'c',
+              cond: { $eq: ['$$c.slug', companySlug] },
+            },
+          },
+        },
+        difficultyRank: {
+          $switch: {
+            branches: [
+              { case: { $eq: ['$difficulty', 'easy'] }, then: 1 },
+              { case: { $eq: ['$difficulty', 'medium'] }, then: 2 },
+              { case: { $eq: ['$difficulty', 'hard'] }, then: 3 },
+            ],
+            default: 4,
+          },
+        },
+      },
+    },
+    { $addFields: { frequency: { $ifNull: ['$companyTag.frequency', 0] } } },
+    {
+      $facet: {
+        metadata: [{ $count: 'total' }],
+        data: [{ $sort: sort }, { $skip: (page - 1) * limit }, { $limit: limit }],
+      },
+    },
+  ];
+
+  const [[result], companyMeta] = await Promise.all([
+    Problem.aggregate(pipeline),
     Problem.findOne({ 'companies.slug': companySlug }, { 'companies.$': 1 }).lean(),
   ]);
+
+  const problems = result?.data || [];
+  const total = result?.metadata?.[0]?.total || 0;
 
   if (!companyMeta) throw httpError(404, 'No interview kit found for that company');
 
@@ -156,15 +196,15 @@ async function getCompanyKit(slug, query = {}, user = null) {
     })),
     problems: problems.map((p) => {
       const progress = progressMap[String(p._id)] || null;
-      // Surface this company's own frequency rather than the whole tag array
-      const tag = (p.companies || []).find((c) => c.slug === companySlug);
       return {
         ...p,
         id: String(p._id),
-        frequency: tag?.frequency || 0,
+        // `frequency` was projected from this company's own tag in the pipeline
         status: progress?.status || 'unsolved',
         starred: progress?.starred || false,
         trackedQuestionId: progress?.trackedQuestionId || null,
+        companyTag: undefined,
+        difficultyRank: undefined,
       };
     }),
     progress: {
