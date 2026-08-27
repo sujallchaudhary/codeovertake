@@ -1,0 +1,119 @@
+name: PR preview cleanup
+
+# Tears the beta environment down when a PR is merged or closed, so previews do
+# not accumulate containers, ports and databases on the host.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    name: Remove preview for PR #${{ github.event.pull_request.number }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the deploy host is configured
+        id: guard
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          if [ -z "${DEPLOY_HOST}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DEPLOY_HOST is not set; nothing to clean up."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop and remove the preview container
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_SSH_PORT || '22' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          install -m 600 /dev/null key
+          printf '%s\n' "${SSH_KEY}" > key
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i key -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "PR_NUMBER='${PR_NUMBER}' bash -s" < deploy/preview-down.sh
+
+          rm -f key
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.configured == 'true'
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Drop the preview database
+        if: steps.guard.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          npm ci --omit=dev --ignore-scripts
+          # Best effort: a PR whose preview never deployed has no database, and a
+          # leftover empty database is cheaper than a red X on a merged PR.
+          node scripts/previewDb.js drop "${PR}"
+
+      - name: Delete the preview image tag
+        if: steps.guard.outputs.configured == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          PACKAGE="$(basename "${GITHUB_REPOSITORY}")-backend"
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+
+          # Find the version carrying the pr-<n> tag, then delete it by id
+          VERSION_ID="$(gh api \
+            "/users/${OWNER}/packages/container/${PACKAGE}/versions" \
+            --jq ".[] | select(.metadata.container.tags[]? == \"pr-${PR}\") | .id" \
+            2>/dev/null | head -1 || true)"
+
+          if [ -n "${VERSION_ID}" ]; then
+            gh api -X DELETE "/users/${OWNER}/packages/container/${PACKAGE}/versions/${VERSION_ID}"
+            echo "Deleted image tag pr-${PR}"
+          else
+            echo "No image tag pr-${PR} found; skipping"
+          fi
+
+      - name: Mark the preview comment as torn down
+        if: steps.guard.outputs.configured == 'true'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- codeovertake-preview -->';
+            const merged = context.payload.pull_request.merged;
+            const body = [
+              marker,
+              '### Beta preview torn down',
+              '',
+              merged
+                ? 'This PR was merged, so its preview container and isolated database have been removed.'
+                : 'This PR was closed, so its preview container and isolated database have been removed.',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo, comment_id: existing.id, body,
+              });
+            }

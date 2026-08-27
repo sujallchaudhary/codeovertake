@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const { errorHandler } = require('./middlewares');
+const { buildOriginChecker } = require('./utils/cors');
 
 const studentRoutes = require('./routes/students');
 const leaderboardRoutes = require('./routes/leaderboard');
@@ -30,19 +31,11 @@ const app = express();
 app.use(helmet());
 
 /**
- * Allowed origins: the configured frontend, plus any browser extension.
- * The extension's popup sends `Origin: chrome-extension://<id>` and the id
- * differs per install, so it is matched by scheme rather than listed.
+ * Allowed origins: the configured frontend, any browser extension, and anything
+ * matching ALLOWED_ORIGINS (used by preview deployments). See utils/cors.js.
  */
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
 app.use(cors({
-  origin(origin, callback) {
-    // Same-origin/server-to-server requests send no Origin header
-    if (!origin) return callback(null, true);
-    if (origin === allowedOrigin) return callback(null, true);
-    if (/^(chrome-extension|moz-extension):\/\//.test(origin)) return callback(null, true);
-    return callback(null, false);
-  },
+  origin: buildOriginChecker(),
   // DELETE/PATCH are needed by the workspace, notes, sheets and portfolio APIs
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }));

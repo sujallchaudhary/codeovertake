@@ -1,0 +1,303 @@
+name: CI
+
+# Runs on every PR and every push to master. On a PR, a passing run also deploys
+# an isolated beta environment you can click through before merging.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+# A new push supersedes the previous run for the same ref
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  backend:
+    name: Backend (lint + 266 tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        working-directory: backend
+        run: npm ci
+
+      - name: Syntax check
+        working-directory: backend
+        run: npm run lint
+
+      # mongodb-memory-server downloads a mongod binary on first use; caching it
+      # saves ~30s per run.
+      - name: Cache mongodb-memory-server binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}
+
+      - name: Test
+        working-directory: backend
+        # The suite deliberately calls live platform APIs, so one retry absorbs a
+        # transient upstream failure without hiding a real regression.
+        env:
+          TEST_RETRIES: '1'
+        run: npm test
+
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: frontend
+        env:
+          # Build-time only: the real key is injected by the hosting platform.
+          # A placeholder is enough to prove the bundle compiles.
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
+        run: npm run build
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only. Catches a broken Dockerfile before it reaches a deploy job.
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  preview:
+    name: Deploy PR preview
+    # Only for PRs, and only once the code is known to work
+    if: github.event_name == 'pull_request'
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    environment:
+      name: preview
+      url: ${{ steps.target.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the deploy host is configured
+        id: guard
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          if [ -z "${DEPLOY_HOST}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DEPLOY_HOST is not set, so no preview was deployed. See the CI/CD section of the README for the secrets to add."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Work out the port, tag and URL
+        id: target
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          PORT_BASE: ${{ vars.PREVIEW_PORT_BASE || '7000' }}
+          URL_TEMPLATE: ${{ vars.PREVIEW_URL_TEMPLATE }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          PORT=$(( PORT_BASE + PR ))
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}-backend:pr-${PR}"
+
+          if [ -n "${URL_TEMPLATE}" ]; then
+            # e.g. https://pr-{PR}.preview.api.example.com  (see deploy/Caddyfile.example)
+            URL="${URL_TEMPLATE//\{PR\}/${PR}}"
+          else
+            # No reverse proxy configured: reachable directly on its port
+            URL="http://${HOST}:${PORT}"
+          fi
+
+          echo "port=${PORT}"   >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "url=${URL}"     >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.guard.outputs.configured == 'true'
+
+      - name: Log in to GHCR
+        if: steps.guard.outputs.configured == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the preview image
+        if: steps.guard.outputs.configured == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.target.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Derive the isolated preview database URI
+        id: db
+        if: steps.guard.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          npm ci --omit=dev --ignore-scripts >/dev/null 2>&1
+          # Each PR gets its own database inside the existing cluster, so a
+          # preview can never touch production data.
+          URI="$(node scripts/previewDb.js uri "${PR}")"
+          echo "::add-mask::${URI}"
+          echo "uri=${URI}" >> "$GITHUB_OUTPUT"
+          echo "Preview database: $(node scripts/previewDb.js name "${PR}")"
+
+      - name: Deploy to the host
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_SSH_PORT || '22' }}
+          IMAGE: ${{ steps.target.outputs.image }}
+          PORT: ${{ steps.target.outputs.port }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MONGODB_URI: ${{ steps.db.outputs.uri }}
+          CLERK_SECRET_KEY: ${{ secrets.PREVIEW_CLERK_SECRET_KEY }}
+          CLERK_JWT_KEY: ${{ secrets.PREVIEW_CLERK_JWT_KEY }}
+          CLERK_WEBHOOK_SECRET: ${{ secrets.PREVIEW_CLERK_WEBHOOK_SECRET }}
+          GH_API_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          ADMIN_SECRET: ${{ secrets.PREVIEW_ADMIN_SECRET }}
+          NSUT_API_URL: ${{ vars.NSUT_API_URL }}
+          INSTITUTE_EMAIL_DOMAIN: ${{ vars.INSTITUTE_EMAIL_DOMAIN }}
+          FRONTEND_URL: ${{ vars.PREVIEW_FRONTEND_URL }}
+          ALLOWED_ORIGINS: ${{ vars.PREVIEW_ALLOWED_ORIGINS || 'https://*.vercel.app' }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          install -m 600 /dev/null key
+          printf '%s\n' "${SSH_KEY}" > key
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+          SSH="ssh -i key -p ${DEPLOY_PORT} ${DEPLOY_USER}@${DEPLOY_HOST}"
+
+          # Ship the deploy scripts so the logic is the version-controlled copy
+          scp -i key -P "${DEPLOY_PORT}" deploy/preview-up.sh \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/preview-up.sh"
+
+          # The host needs to pull from GHCR; the job token is enough and expires
+          echo "${REGISTRY_TOKEN}" | $SSH "docker login ghcr.io -u ${GITHUB_ACTOR} --password-stdin"
+
+          # Secrets travel as environment variables over the SSH session rather
+          # than as arguments, so they never appear in the host's process list.
+          $SSH \
+            "PR_NUMBER='${PR_NUMBER}' \
+             IMAGE='${IMAGE}' \
+             PORT='${PORT}' \
+             MONGODB_URI='${MONGODB_URI}' \
+             CLERK_SECRET_KEY='${CLERK_SECRET_KEY}' \
+             CLERK_JWT_KEY='${CLERK_JWT_KEY}' \
+             CLERK_WEBHOOK_SECRET='${CLERK_WEBHOOK_SECRET}' \
+             GITHUB_TOKEN='${GH_API_TOKEN}' \
+             ADMIN_SECRET='${ADMIN_SECRET}' \
+             NSUT_API_URL='${NSUT_API_URL}' \
+             INSTITUTE_EMAIL_DOMAIN='${INSTITUTE_EMAIL_DOMAIN}' \
+             FRONTEND_URL='${FRONTEND_URL}' \
+             ALLOWED_ORIGINS='${ALLOWED_ORIGINS}' \
+             bash -s" < deploy/preview-up.sh
+
+          rm -f key
+
+      - name: Comment the preview URL on the PR
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/github-script@v7
+        env:
+          URL: ${{ steps.target.outputs.url }}
+          PORT: ${{ steps.target.outputs.port }}
+        with:
+          script: |
+            const url = process.env.URL;
+            const marker = '<!-- codeovertake-preview -->';
+            const body = [
+              marker,
+              '### Beta preview is live',
+              '',
+              `| | |`,
+              `|---|---|`,
+              `| API | ${url}/api |`,
+              `| Health | ${url}/api/health |`,
+              `| Database | \`codeovertake_pr_${context.issue.number}\` (isolated, dropped when this PR closes) |`,
+              `| Commit | \`${context.sha.slice(0, 7)}\` |`,
+              '',
+              'Curated sheets and company kits are seeded. Scheduled cron jobs are',
+              'disabled here so open PRs do not multiply load on the platform APIs.',
+              '',
+              '<details><summary>Point a local frontend at it</summary>',
+              '',
+              '```bash',
+              `echo "VITE_API_URL=${url}/api" >> frontend/.env.local`,
+              'npm --prefix frontend run dev',
+              '```',
+              '</details>',
+            ].join('\n');
+
+            // Update the existing comment rather than adding one per push
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: context.issue.number, body,
+              });
+            }

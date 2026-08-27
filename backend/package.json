@@ -11,7 +11,9 @@
     "seed:content": "node scripts/seedContent.js",
     "seed:sheets": "node scripts/seedContent.js --sheets",
     "seed:companies": "node scripts/seedContent.js --companies",
-    "seed:catalog": "node scripts/seedContent.js --catalog"
+    "seed:catalog": "node scripts/seedContent.js --catalog",
+    "test": "node test/run.js",
+    "lint": "node --check server.js && node scripts/checkSyntax.js"
   },
   "dependencies": {
     "@clerk/backend": "^3.16.12",
@@ -28,6 +30,7 @@
     "svix": "^2.1.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "mongodb-memory-server": "^10.2.1"
   }
 }

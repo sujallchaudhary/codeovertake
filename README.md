@@ -459,6 +459,114 @@ Each pillar takes your **best** platform (so linking three CP sites does not
 triple-count the same skill), and the weighted blend is multiplied by a balance
 factor worth up to **+15%** — which is what makes the score reward breadth.
 
+## CI/CD
+
+Three workflows in `.github/workflows/`:
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | every PR, pushes to `master` | Lint + 266 tests, frontend typecheck + build, both Docker images build. On a PR it then deploys a beta preview. |
+| `pr-cleanup.yml` | PR closed or merged | Removes the preview container, drops its database, deletes the image tag. |
+| `deploy.yml` | CI succeeds on `master` | Builds, pushes, deploys production, health-checks, rolls back on failure. |
+
+### Beta preview per PR
+
+Open a PR and, once the checks pass, a bot comment appears with a URL to a live
+backend running that branch:
+
+```
+### Beta preview is live
+| API      | http://your-host:7019/api        |
+| Health   | http://your-host:7019/api/health |
+| Database | codeovertake_pr_19 (isolated)    |
+```
+
+Design notes worth knowing:
+
+- **The preview only deploys if the tests pass** (`needs: [backend, frontend]`),
+  so you never spend time testing a build that CI already knows is broken.
+- **Each PR gets its own MongoDB database** inside the existing cluster
+  (`codeovertake_pr_<n>`), so a preview can never read or corrupt production data.
+  It is dropped automatically when the PR closes.
+- **Cron jobs are disabled in previews** (`DISABLE_CRON=true`). Otherwise every
+  open PR would run its own nightly student refresh and 6-hourly contest sync,
+  multiplying this repo's load on GitHub, LeetCode, Codeforces and CodeChef. The
+  boot-time contest sync still runs, so the calendar has data.
+- **Curated sheets and company kits are seeded** on a best-effort basis, because a
+  preview with an empty catalog is not testable. A slow upstream logs a warning
+  rather than failing the deploy.
+- Re-pushing to the PR replaces the container in place and updates the same
+  comment instead of adding a new one.
+
+Previews are served on `PREVIEW_PORT_BASE + PR_NUMBER` (default `7000`, so PR #19
+is port `7019`). A plain-HTTP port is fine for `curl`, Postman, or a locally-run
+frontend. It is *not* enough for a browser on an HTTPS page (a Vercel preview),
+which will block the mixed-content request — for that, front previews with a
+reverse proxy and set `PREVIEW_URL_TEMPLATE`. See
+[`deploy/Caddyfile.example`](deploy/Caddyfile.example) for a wildcard-TLS setup.
+
+To test a preview against a real UI:
+
+```bash
+echo "VITE_API_URL=http://your-host:7019/api" >> frontend/.env.local
+npm --prefix frontend run dev
+```
+
+### Configuration
+
+Every deploy job checks for `DEPLOY_HOST` first. Until you set it the pipeline
+still runs all the checks and simply posts a notice instead of failing, so the
+repo is usable before any hosting is wired up.
+
+**Secrets** (Settings → Secrets and variables → Actions → Secrets):
+
+| Secret | Used for |
+|---|---|
+| `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` | SSH into the deploy host |
+| `DEPLOY_SSH_PORT` | Optional, defaults to 22 |
+| `MONGODB_URI` | Base cluster URI; previews derive an isolated database from it |
+| `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `CLERK_WEBHOOK_SECRET` | Production Clerk instance |
+| `PREVIEW_CLERK_SECRET_KEY`, `PREVIEW_CLERK_JWT_KEY`, `PREVIEW_CLERK_WEBHOOK_SECRET` | Clerk **development** instance, for previews |
+| `ADMIN_SECRET`, `PREVIEW_ADMIN_SECRET` | Admin API shared secret |
+| `PLATFORM_GITHUB_TOKEN` | GitHub PAT the app uses for contribution stats |
+
+**Variables** (same page → Variables) — all optional:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PRODUCTION_URL` | — | Public health check after deploy |
+| `PRODUCTION_PORT` | `6754` | Host port for the production container |
+| `FRONTEND_URL`, `ALLOWED_ORIGINS` | — | CORS for production |
+| `PREVIEW_PORT_BASE` | `7000` | Preview port = base + PR number |
+| `PREVIEW_URL_TEMPLATE` | — | e.g. `https://pr-{PR}.preview.api.example.com` |
+| `PREVIEW_FRONTEND_URL`, `PREVIEW_ALLOWED_ORIGINS` | `https://*.vercel.app` | CORS for previews |
+| `NSUT_API_URL`, `INSTITUTE_EMAIL_DOMAIN` | — | Passed through to the app |
+
+The deploy host needs Docker, and the SSH user must be able to run it.
+Credentials are written to a `600` env file rather than passed as `-e` flags, so
+they do not appear in `docker inspect` or the host's process list.
+
+### Using a managed platform instead
+
+The deploy steps are thin wrappers around the scripts in `deploy/`, so swapping
+hosts means replacing one step. On Render or Railway you can delete the `preview`
+job entirely and enable their native PR previews — keep `ci.yml`'s test jobs as
+the required status check either way.
+
+### Tests
+
+```bash
+npm test --prefix backend            # all 266
+npm test --prefix backend -- units   # just the fast pure-function suite
+npm run lint --prefix backend        # parse every file
+npm run typecheck --prefix frontend
+```
+
+Suites run as separate processes against an in-process MongoDB and the real
+Express app over HTTP. `features.test.js` deliberately calls the live platform
+APIs, because a mocked adapter proves nothing about the thing most likely to
+break; a failed suite is retried once (`TEST_RETRIES`) to absorb upstream blips.
+
 ## Scripts
 
 ```bash
