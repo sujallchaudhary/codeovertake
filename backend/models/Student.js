@@ -13,6 +13,39 @@ const studentSchema = new mongoose.Schema({
   branch: { type: String, required: true, trim: true, index: true },
   year: { type: Number, required: true, index: true },
   lastEditedAt: { type: Date, default: null },
+
+  /**
+   * Ownership of this leaderboard profile.
+   *
+   * These records predate accounts, so most start life unowned: `claimedBy` is
+   * null and anyone who knows the roll number can edit the usernames, guarded
+   * only by the 24h cooldown. That is the historical behaviour and it stays, so
+   * the existing user base is not locked out overnight.
+   *
+   * Once a real person proves the profile is theirs (services/claimService.js),
+   * `claimedBy` is set and edits become owner-only. Adoption is therefore
+   * gradual, and every claim permanently closes one more open record.
+   */
+  claimedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+    index: true,
+  },
+  claimedAt: { type: Date, default: null },
+
+  /**
+   * In-flight claim. Storing it on the Student (rather than the User) means only
+   * one claim can be pending per roll number, so two people cannot race for the
+   * same profile.
+   */
+  pendingClaim: {
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    platform: { type: String, default: '' },
+    code: { type: String, default: '' },
+    expiresAt: { type: Date, default: null },
+    attempts: { type: Number, default: 0 },
+  },
   usernameHistory: [{
     changedAt: { type: Date, required: true },
     usernames: { type: Map, of: String },

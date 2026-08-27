@@ -1,47 +1,18 @@
 const express = require('express');
-const rateLimit = require('express-rate-limit');
-const { body, query } = require('express-validator');
+const { query } = require('express-validator');
 const { asyncHandler, validate, requireAuth } = require('../middlewares');
 const ctrl = require('../controllers/authController');
 
 const router = express.Router();
 
-// Brute-force protection on the credential endpoints only
-const credentialLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: { error: 'Too many attempts, please try again later' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+/**
+ * There are no /signup or /login routes: Clerk owns credentials, social sign-in
+ * (Google, GitHub, ...), MFA and password resets. The frontend authenticates
+ * with Clerk and sends the resulting session token as a bearer.
+ */
 
-router.post(
-  '/signup',
-  credentialLimiter,
-  [
-    // Deliberately not normalizeEmail(): it strips Gmail dots, which the
-    // GitHub OAuth path does not do, so the two would create separate accounts
-    // for the same person. Both paths lowercase + trim in authService instead.
-    body('email').isEmail().withMessage('Valid email required'),
-    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-    body('name').trim().notEmpty().withMessage('Name is required'),
-    body('handle').optional({ values: 'falsy' }).trim(),
-    body('rollno').optional({ values: 'falsy' }).trim(),
-  ],
-  validate,
-  asyncHandler(ctrl.signup),
-);
-
-router.post(
-  '/login',
-  credentialLimiter,
-  [
-    body('email').isEmail().withMessage('Valid email required'),
-    body('password').notEmpty().withMessage('Password is required'),
-  ],
-  validate,
-  asyncHandler(ctrl.login),
-);
+// Public: tells the frontend whether auth is wired up on this deployment
+router.get('/config', asyncHandler(ctrl.config));
 
 router.get(
   '/check-handle',
@@ -50,26 +21,20 @@ router.get(
   asyncHandler(ctrl.checkHandle),
 );
 
-// GitHub SSO
-router.get('/github/url', asyncHandler(ctrl.githubAuthorizeUrl));
-router.post(
-  '/github/callback',
-  credentialLimiter,
-  [body('code').trim().notEmpty().withMessage('code is required')],
-  validate,
-  asyncHandler(ctrl.githubCallback),
-);
-
-// Authenticated
+// Authenticated: our local mirror of the Clerk account
 router.get('/me', requireAuth, asyncHandler(ctrl.me));
 router.put('/me', requireAuth, asyncHandler(ctrl.updateAccount));
-router.put(
-  '/password',
-  requireAuth,
-  [body('newPassword').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')],
-  validate,
-  asyncHandler(ctrl.changePassword),
-);
+
+/**
+ * Pulls the latest profile and social connections from Clerk on demand.
+ *
+ * The `user.updated` webhook normally does this, but that needs a publicly
+ * reachable URL - so in local development, and immediately after linking a
+ * provider, this gives the UI a way to refresh without waiting.
+ */
+router.post('/sync', requireAuth, asyncHandler(ctrl.syncFromClerk));
+
+// Browser-extension pairing token
 router.get('/extension-token', requireAuth, asyncHandler(ctrl.extensionToken));
 router.post('/extension-token/rotate', requireAuth, asyncHandler(ctrl.revokeExtensionToken));
 

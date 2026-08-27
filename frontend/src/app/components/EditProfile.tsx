@@ -3,11 +3,12 @@ import { Link, useSearchParams } from "react-router";
 import {
   BadgeCheck, Check, Copy, Github, Loader2, Plus, Puzzle, Trash2, X,
 } from "lucide-react";
+import { useClerk } from "@clerk/react";
 import {
   addEducation, addExperience, addProject, deleteEducation, deleteExperience, deleteProject,
-  fetchExtensionToken, fetchGithubAuthUrl, fetchGithubRepos, fetchPortfolioPlatforms,
+  fetchExtensionToken, fetchGithubRepos, fetchPortfolioPlatforms,
   removePortfolioPlatform, reorderProjects, rotateExtensionToken, setPortfolioPlatform,
-  updateAccount, verifyPlatform,
+  syncAccountFromClerk, updateAccount, verifyPlatform,
   type PortfolioPlatformMeta,
 } from "../api";
 import { useAuth } from "../AuthContext";
@@ -42,13 +43,13 @@ function Section({ title, description, children }: {
 
 function AccountTab() {
   const { user, patchUser, refresh } = useAuth();
+  const clerk = useClerk();
   const [form, setForm] = useState({
     name: user?.name || "",
     handle: user?.handle || "",
     headline: user?.headline || "",
     about: user?.about || "",
     location: user?.location || "",
-    rollno: user?.rollno || "",
     website: user?.socials?.website || "",
     linkedin: user?.socials?.linkedin || "",
     twitter: user?.socials?.twitter || "",
@@ -69,7 +70,6 @@ function AccountTab() {
         headline: form.headline,
         about: form.about,
         location: form.location,
-        rollno: form.rollno,
         isPublic: form.isPublic,
         socials: { website: form.website, linkedin: form.linkedin, twitter: form.twitter },
       } as any);
@@ -127,14 +127,35 @@ function AccountTab() {
             <label className={labelClass}>Location</label>
             <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} />
           </div>
+          {/*
+            Roll number is not a free-text field any more: pointing your
+            portfolio at a leaderboard profile requires a verified claim,
+            otherwise anyone could display someone else's ranking as their own.
+          */}
           <div>
-            <label className={labelClass}>NSUT roll number</label>
-            <input
-              value={form.rollno}
-              onChange={(e) => setForm({ ...form, rollno: e.target.value.toUpperCase() })}
-              placeholder="Links your portfolio to the leaderboard"
-              className={inputClass}
-            />
+            <label className={labelClass}>Leaderboard profile</label>
+            {user?.rollno ? (
+              <div className="flex items-center gap-2 rounded border border-[#1e1e1e] bg-[#0a0a0a] px-3 py-2">
+                <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-[#4ade80]" />
+                <span className="font-['JetBrains_Mono'] text-sm text-white">{user.rollno}</span>
+                <Link
+                  to="/claim"
+                  className="ml-auto font-['JetBrains_Mono'] text-[11px] text-[#888888] transition-colors hover:text-white"
+                >
+                  Manage
+                </Link>
+              </div>
+            ) : (
+              <Link
+                to="/claim"
+                className="flex items-center justify-between rounded border border-[#1e1e1e] bg-[#0a0a0a] px-3 py-2 transition-colors hover:border-[#4ade80]"
+              >
+                <span className="font-['Archivo'] text-sm text-[#888888]">
+                  Not linked to a roll number
+                </span>
+                <span className="font-['JetBrains_Mono'] text-[11px] text-[#4ade80]">Claim →</span>
+              </Link>
+            )}
           </div>
           <div>
             <label className={labelClass}>Website</label>
@@ -186,6 +207,32 @@ function AccountTab() {
           )}
         </div>
       </Section>
+
+      {/*
+        Credentials live in Clerk, so email, password, MFA and connected
+        accounts are managed in its account modal rather than duplicated here.
+      */}
+      <Section
+        title="Sign-in and security"
+        description="Your email, password, two-factor authentication and connected accounts (Google, GitHub, ...) are managed by Clerk."
+      >
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="rounded bg-[#1a1a1a] px-2 py-1 font-['JetBrains_Mono'] text-[11px] text-[#aaaaaa]">
+            {user?.email}
+          </span>
+          {(user?.verifiedEmails || []).includes(user?.email || "") && (
+            <span className="flex items-center gap-1 rounded bg-[#4ade80]/15 px-1.5 py-0.5 font-['JetBrains_Mono'] text-[10px] text-[#4ade80]">
+              <BadgeCheck className="h-3 w-3" /> verified
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => clerk.openUserProfile()}
+          className="rounded border border-[#1e1e1e] px-3 py-2 font-['JetBrains_Mono'] text-xs text-white transition-colors hover:border-[#4ade80]"
+        >
+          Manage account
+        </button>
+      </Section>
     </div>
   );
 }
@@ -194,6 +241,7 @@ function AccountTab() {
 
 function PlatformRow({ meta, onChanged }: { meta: PortfolioPlatformMeta; onChanged: () => void }) {
   const { user } = useAuth();
+  const clerk = useClerk();
   const entry = user?.platforms?.[meta.key];
   const [username, setUsername] = useState(entry?.username || "");
   const [busy, setBusy] = useState(false);
@@ -247,12 +295,25 @@ function PlatformRow({ meta, onChanged }: { meta: PortfolioPlatformMeta; onChang
     }
   }
 
-  async function connectGithub() {
+  /**
+   * GitHub is linked as a Clerk social connection, so the account modal owns
+   * that flow. After linking we pull the connection through immediately rather
+   * than waiting for the `user.updated` webhook.
+   */
+  function connectGithub() {
+    clerk.openUserProfile();
+  }
+
+  async function pullFromClerk() {
+    setBusy(true);
+    setError("");
     try {
-      const { url } = await fetchGithubAuthUrl(`${window.location.origin}/auth/github/callback`);
-      window.location.href = url;
+      await syncAccountFromClerk();
+      onChanged();
     } catch (err: any) {
-      setError(err.message || "GitHub OAuth is not configured");
+      setError(err.message || "Could not refresh from Clerk");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -303,7 +364,16 @@ function PlatformRow({ meta, onChanged }: { meta: PortfolioPlatformMeta; onChang
             className="flex items-center gap-1.5 rounded bg-[#4ade80] px-2.5 py-1.5 font-['JetBrains_Mono'] text-xs text-black transition-opacity hover:opacity-90"
           >
             <Github className="h-3 w-3" />
-            {user?.githubAuth?.login ? "Reconnect OAuth" : "Connect with OAuth"}
+            {user?.githubAuth?.login ? "Manage connection" : "Connect GitHub"}
+          </button>
+          <button
+            onClick={pullFromClerk}
+            disabled={busy}
+            title="Pull your linked accounts from Clerk now"
+            className="flex items-center gap-1.5 rounded border border-[#1e1e1e] px-2.5 py-1.5 font-['JetBrains_Mono'] text-xs text-[#888888] transition-colors hover:text-white disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+            Refresh
           </button>
           {entry?.username && (
             <button
@@ -315,7 +385,9 @@ function PlatformRow({ meta, onChanged }: { meta: PortfolioPlatformMeta; onChang
             </button>
           )}
           <p className="w-full font-['Archivo'] text-[11px] text-[#666666]">
-            OAuth verifies you automatically and unlocks the repository picker for projects.
+            Link GitHub under <span className="text-[#aaaaaa]">Connected accounts</span> in the
+            account modal. That verifies the development pillar automatically and unlocks the
+            repository picker for projects, then press Refresh.
           </p>
         </div>
       ) : (

@@ -69,6 +69,15 @@ and a recruiter-ready portfolio.
   **Last 45 Days** preparation modes
 - GeeksforGeeks company tags are imported automatically when a GfG problem is resolved
 
+### Accounts and claiming your profile
+
+- **Clerk-managed auth** — Continue with Google, GitHub or any other provider
+  toggled on in the Clerk Dashboard. No passwords are stored by this app, and MFA,
+  password resets and email verification come for free
+- **Claim your leaderboard profile** — the `Student` records predate accounts, so
+  most have no owner. Claiming proves a roll number is yours and locks editing to
+  your account
+
 ### Portfolio (Profile Tracker)
 
 - **One link instead of five** — `/u/<handle>` aggregates every platform you connect
@@ -101,7 +110,7 @@ and a recruiter-ready portfolio.
 |-----------|-----------|
 | Backend | Node.js, Express, MongoDB (Mongoose) |
 | Frontend | React, React Router, TypeScript, Vite |
-| Auth | JWT (jsonwebtoken) + bcrypt, GitHub OAuth |
+| Auth | Clerk (`@clerk/react`, `@clerk/backend`) + Svix webhooks |
 | Styling | Tailwind CSS, JetBrains Mono + Archivo fonts |
 | Charts | Recharts |
 | Icons | Lucide React |
@@ -116,9 +125,9 @@ codeovertake/
 ├── backend/
 │   ├── config/db.js              # MongoDB connection
 │   ├── models/
-│   │   ├── Student.js            # Leaderboard student (profiles, stats, scores, ranks)
+│   │   ├── Student.js            # Leaderboard student (+ claimedBy / pendingClaim)
 │   │   ├── Snapshot.js           # Daily score snapshots
-│   │   ├── User.js               # Account + portfolio (platforms, projects, C-Score)
+│   │   ├── User.js               # Clerk-mirrored account + portfolio (C-Score, platforms)
 │   │   ├── Problem.js            # Shared problem catalog (+ company tags)
 │   │   ├── TrackedQuestion.js    # User <-> problem join + revision schedule
 │   │   ├── Note.js               # Notes, linkable to many problems
@@ -136,7 +145,10 @@ codeovertake/
 │   ├── problems/metadata.js      # Problem metadata fetchers per platform
 │   ├── services/                 # All business logic
 │   │   ├── studentService.js  leaderboardService.js  rankingService.js
-│   │   ├── authService.js  portfolioService.js
+│   │   ├── clerkService.js       # Token verification, OAuth tokens, profile reads
+│   │   ├── authService.js        # Local mirror, JIT provisioning, cascade delete
+│   │   ├── claimService.js       # Prove ownership of a roll number
+│   │   ├── portfolioService.js
 │   │   ├── problemService.js  workspaceService.js  noteService.js
 │   │   ├── revisionService.js  sheetService.js  companyService.js
 │   │   └── contestService.js
@@ -146,7 +158,7 @@ codeovertake/
 │   ├── utils/
 │   │   ├── problemUrl.js         # Problem URL parsing for 11 platforms
 │   │   ├── spacedRepetition.js   # Scheduling + memory-decay maths (pure)
-│   │   ├── csv.js  concurrency.js  jwt.js  httpError.js
+│   │   ├── csv.js  concurrency.js  httpError.js
 │   ├── cron/updateData.js        # Parallel batch data fetcher
 │   ├── scripts/
 │   │   ├── seedContent.js        # Curated sheets + company kits
@@ -162,15 +174,17 @@ codeovertake/
     └── src/
         ├── main.tsx              # App entry
         └── app/
-            ├── api.ts            # API client (typed, token-aware)
-            ├── AuthContext.tsx   # Session provider
+            ├── api.ts            # API client (async Clerk token provider)
+            ├── AuthContext.tsx   # Bridges the Clerk session to our user record
+            ├── clerkAppearance.ts  # Dark theme for Clerk's prebuilt components
             ├── routes.tsx        # React Router config
             └── components/
                 ├── Layout.tsx        # Navbar + account menu + footer
                 ├── Leaderboard.tsx   # Leaderboard with tabs, filters, infinite scroll
                 ├── Register.tsx      # Two-step registration with validation
                 ├── StudentProfile.tsx  About.tsx  HeadOn.tsx  Analytics.tsx
-                ├── Auth.tsx          # Login / signup / GitHub callback
+                ├── Auth.tsx          # Clerk <SignIn> / <SignUp>
+                ├── ClaimProfile.tsx  # Claim a leaderboard roll number
                 ├── Workspace.tsx     # Question tracker
                 ├── AddQuestionModal.tsx  QuestionDetail.tsx
                 ├── Notes.tsx         # Linked notes
@@ -223,15 +237,87 @@ Runs on `http://localhost:5173`.
 | `CRON_SCHEDULE` | Cron expression for data updates | No (default: 12 AM IST) |
 | `FRONTEND_URL` | CORS allowed origin | No (default: http://localhost:5173) |
 | `NSUT_API_URL` | External API for student lookup by roll number | No |
-| `JWT_SECRET` | Signing secret for session tokens | **Yes** (for accounts) |
-| `JWT_EXPIRES_IN` | Session lifetime | No (default: 30d) |
-| `GITHUB_OAUTH_CLIENT_ID` | GitHub OAuth app client id | No (enables GitHub SSO) |
-| `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth app client secret | No |
-| `GITHUB_OAUTH_REDIRECT_URI` | OAuth callback, e.g. `http://localhost:5173/auth/github/callback` | No |
+| `CLERK_SECRET_KEY` | Clerk Backend API key | **Yes** (for accounts) |
+| `CLERK_JWT_KEY` | Clerk instance PEM public key — makes token verification networkless | Recommended |
+| `CLERK_WEBHOOK_SECRET` | Svix signing secret for the Clerk webhook | Recommended |
+| `INSTITUTE_EMAIL_DOMAIN` | e.g. `nsut.ac.in`. Enables the email path for claiming | No |
 | `CONTEST_CRON_SCHEDULE` | Cron expression for contest sync | No (default: every 6h) |
+
+Frontend (`frontend/.env`):
+
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_URL` | Backend base URL including `/api` |
+| `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key |
 
 Browser-extension origins (`chrome-extension://…`) are allowed through CORS
 automatically, since the extension id differs per install.
+
+## Authentication
+
+Authentication is handled entirely by **Clerk**. This app stores no passwords.
+
+- Social providers ("Continue with Google", GitHub, …) are toggled in the Clerk
+  Dashboard under **User & Authentication → Social Connections**. Adding one needs
+  no code change — the sign-in UI picks it up.
+- The frontend sends Clerk's session token as a bearer; the backend verifies it
+  with `@clerk/backend`. Supplying `CLERK_JWT_KEY` makes that verification
+  networkless. Tokens are additionally checked against `authorizedParties`, so a
+  token minted for a different app on the same Clerk instance cannot be replayed.
+- A local `User` document mirrors the Clerk account and holds the data this app
+  owns (handle, portfolio, platform links, workspace, C-Score). It is provisioned
+  **just in time** on the first authenticated request, so nobody is blocked
+  waiting for a webhook.
+- `POST /api/webhooks/clerk` keeps the mirror in sync (`user.updated`) and cascades
+  deletions (`user.deleted`). It is mounted with a raw body parser before
+  `express.json`, because Svix signs the exact bytes.
+- The **browser extension** authenticates with a rotatable pairing token instead,
+  since a service worker has no context in which to refresh a short-lived Clerk
+  token. Both credential types flow through the same `requireAuth`.
+
+Set up the webhook in the Clerk Dashboard pointing at
+`https://your-api/api/webhooks/clerk`, subscribed to `user.created`,
+`user.updated` and `user.deleted`. Locally, the **Refresh** button under
+*Edit profile → Platforms* pulls from Clerk on demand instead.
+
+## Claiming a leaderboard profile
+
+The `Student` collection predates accounts. Records were created by whoever typed
+in a roll number, they carry no owner, and editing is guarded only by a 24-hour
+cooldown — so anyone who knows a roll number can change its usernames.
+
+Rather than a hard cutover that would lock out everyone who has not signed up,
+ownership is adopted **progressively**:
+
+| Record state | Who can edit | Cooldown |
+|---|---|---|
+| Unclaimed | anyone (original behaviour) | 24h |
+| Claimed | the owner only | none |
+
+Every claim therefore permanently closes one more open record, and nothing breaks
+for users who never make an account.
+
+To claim, you prove control of something already on the record. There are three
+paths, strongest first:
+
+1. **Already-verified platform** — the handle on the record is one you have
+   already verified on your portfolio. Instant, no extra steps.
+2. **One-time code** — paste a code into the profile of a coding account listed on
+   the record (LeetCode Summary, Codeforces First Name, …) and we read it back.
+   Crucially the handle is taken *from the record*, never from your input, so you
+   cannot simply point us at your own account.
+3. **Institute email** — a Clerk-*verified* address on `INSTITUTE_EMAIL_DOMAIN`,
+   plus either the roll number appearing in the address or a name match against
+   the official student lookup. A college address alone is not enough to grab a
+   classmate's profile.
+
+Only one claim can be pending per roll number, codes expire after an hour, and
+`POST /api/claims/:rollno/admin-reassign` is the admin escape hatch for the cases
+self-service cannot cover.
+
+Because `rollno` is what links a portfolio to a leaderboard ranking, it is no
+longer a free-text field on the profile form — it is only ever written by a
+verified claim.
 
 ## API Endpoints
 
@@ -257,10 +343,25 @@ automatically, since the extension id differs per install.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/auth/signup` · `/api/auth/login` | Email + password accounts |
+| GET | `/api/auth/config` | Whether Clerk is configured, and the claim email domain |
 | GET | `/api/auth/me` · PUT `/api/auth/me` | Read / update the signed-in account |
-| GET | `/api/auth/github/url` · POST `/api/auth/github/callback` | GitHub SSO |
+| POST | `/api/auth/sync` | Pull profile + social connections from Clerk on demand |
 | GET | `/api/auth/extension-token` | Pairing token for the browser extension |
+| POST | `/api/webhooks/clerk` | Clerk webhook (Svix-signed, raw body) |
+
+Sign-up and sign-in have no endpoints here — Clerk handles them in the frontend.
+
+### Claiming
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/claims/:rollno` | Claim status and the proof options available to you |
+| GET | `/api/claims/mine` | The profile this account owns |
+| POST | `/api/claims/:rollno/claim-verified` | Instant claim via an already-verified handle |
+| POST | `/api/claims/:rollno/start` · `/verify` | One-time code path |
+| POST | `/api/claims/:rollno/claim-email` | Institute-email path |
+| DELETE | `/api/claims/:rollno` | Release your claim |
+| POST | `/api/claims/:rollno/admin-reassign` | Admin: reassign or unclaim |
 
 ### Tracker
 

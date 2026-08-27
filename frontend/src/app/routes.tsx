@@ -9,7 +9,8 @@ import { HeadOn } from "./components/HeadOn";
 import { Analytics } from "./components/Analytics";
 
 // Tracker / portfolio / contest-manager features
-import { GithubCallback, Login, Signup } from "./components/Auth";
+import { Login, Signup } from "./components/Auth";
+import { ClaimProfile } from "./components/ClaimProfile";
 import { Contests } from "./components/Contests";
 import { Workspace } from "./components/Workspace";
 import { Notes } from "./components/Notes";
@@ -33,10 +34,16 @@ export const router = createBrowserRouter([
       { path: "analytics", Component: Analytics },
       { path: "about", Component: About },
 
-      // Accounts
-      { path: "login", Component: Login },
-      { path: "signup", Component: Signup },
-      { path: "auth/github/callback", Component: GithubCallback },
+      /**
+       * Splat paths: Clerk renders its multi-step flows (SSO callback, second
+       * factor, email verification) as nested routes under the base URL, so
+       * anything narrower would 404 mid-sign-in.
+       */
+      { path: "login/*", Component: Login },
+      { path: "signup/*", Component: Signup },
+
+      // Attach an existing leaderboard profile to this account
+      { path: "claim", Component: ClaimProfile },
 
       // Question tracker
       { path: "workspace", Component: Workspace },

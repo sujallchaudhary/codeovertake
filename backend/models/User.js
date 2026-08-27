@@ -69,6 +69,23 @@ const projectSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const userSchema = new mongoose.Schema({
+  /**
+   * Clerk is the identity provider: this is the account's real primary key.
+   * Everything else on this document is either our own data (portfolio,
+   * platforms, workspace) or a cache of Clerk fields kept fresh by the
+   * `user.updated` webhook.
+   *
+   * We never store passwords - Clerk owns credentials, social sign-in and MFA.
+   */
+  clerkUserId: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    index: true,
+  },
+
+  // Cached from Clerk's primary email address
   email: {
     type: String,
     required: true,
@@ -77,8 +94,12 @@ const userSchema = new mongoose.Schema({
     trim: true,
     index: true,
   },
-  // Nullable so GitHub-OAuth-only accounts are possible
-  passwordHash: { type: String, default: null },
+  /**
+   * Every address Clerk has *verified*. Identity decisions (claiming a roll
+   * number by institute email, matching a sheet collaborator invite) read this
+   * rather than `email`, because only verified addresses prove anything.
+   */
+  verifiedEmails: [{ type: String, lowercase: true, trim: true }],
 
   // Public portfolio slug: codeovertake.com/u/<handle>
   handle: {
@@ -91,6 +112,13 @@ const userSchema = new mongoose.Schema({
   },
   name: { type: String, required: true, trim: true },
   avatarUrl: { type: String, default: '' },
+  /**
+   * Set once the user edits their name/avatar here. While false, both mirror
+   * Clerk; once true, Clerk syncs leave them alone so a deliberate local edit
+   * is not reverted by the next `user.updated` webhook.
+   */
+  nameOverridden: { type: Boolean, default: false },
+  avatarOverridden: { type: Boolean, default: false },
   headline: { type: String, default: '', trim: true },
   about: { type: String, default: '' },
   location: { type: String, default: '', trim: true },
@@ -101,15 +129,27 @@ const userSchema = new mongoose.Schema({
     twitter: { type: String, default: '' },
   },
 
-  // Optional link to the NSUT leaderboard Student document
+  /**
+   * Link to the NSUT leaderboard Student document.
+   *
+   * Only ever written by a *verified* claim (services/claimService.js) - never
+   * from a plain profile update - because it is what makes the leaderboard
+   * profile appear on this portfolio.
+   */
   rollno: { type: String, default: null, uppercase: true, trim: true, index: true },
+  rollnoClaimedAt: { type: Date, default: null },
 
   platforms: buildPlatformFields(),
 
-  // GitHub OAuth (Development Stats)
+  /**
+   * GitHub social connection.
+   *
+   * The OAuth access token is deliberately NOT stored: it is read from Clerk on
+   * demand (clerkService.getOauthAccessToken) whenever the project picker needs
+   * it, so a database dump never contains usable GitHub credentials.
+   */
   githubAuth: {
     login: { type: String, default: '' },
-    accessToken: { type: String, default: '', select: false },
     connectedAt: { type: Date, default: null },
   },
 
@@ -160,9 +200,7 @@ userSchema.methods.hasAnyVerifiedPlatform = function hasAnyVerifiedPlatform() {
 /** Strip everything that should never leave the server. */
 userSchema.methods.toSafeJSON = function toSafeJSON() {
   const obj = this.toObject({ virtuals: true });
-  delete obj.passwordHash;
   delete obj.extensionToken;
-  if (obj.githubAuth) delete obj.githubAuth.accessToken;
   // Verification codes are only shown through the dedicated endpoint
   for (const key of getPortfolioPlatformKeys()) {
     if (obj.platforms?.[key]) delete obj.platforms[key].verificationCode;

@@ -1,34 +1,19 @@
 const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
-const TOKEN_KEY = "codeovertake.token";
-
 /**
- * Bearer token for the authenticated (Codolio-style) endpoints. Kept in a module
- * variable so every request picks it up without threading it through callers,
- * and mirrored into localStorage so a refresh keeps the session.
+ * Supplies the bearer token for authenticated endpoints.
+ *
+ * Clerk session tokens are short-lived and refreshed in the background, so we
+ * ask for one per request rather than caching a string. AuthContext installs a
+ * provider backed by Clerk's `getToken()`; there is deliberately no localStorage
+ * copy, because Clerk owns session persistence.
  */
-let authToken: string | null = readStoredToken();
+type TokenProvider = () => Promise<string | null>;
 
-function readStoredToken(): string | null {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
+let tokenProvider: TokenProvider | null = null;
 
-export function setAuthToken(token: string | null) {
-  authToken = token;
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* private browsing: in-memory token still works for this tab */
-  }
-}
-
-export function getAuthToken() {
-  return authToken;
+export function setTokenProvider(provider: TokenProvider | null) {
+  tokenProvider = provider;
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -36,7 +21,13 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string> | undefined),
   };
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+  if (tokenProvider) {
+    // A failure here means "not signed in", not "request failed" — public
+    // endpoints must still work, so we fall through without a header.
+    const token = await tokenProvider().catch(() => null);
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
 
   const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
   if (!res.ok) {
@@ -354,9 +345,16 @@ export const fetchContributors = async () => {
 
 // ---- Auth ----
 
+/**
+ * Our local mirror of the Clerk account. Clerk owns credentials, social
+ * providers and MFA; everything here is data this app owns, plus a cache of the
+ * Clerk profile fields.
+ */
 export interface AuthUser {
   _id: string;
+  clerkUserId: string;
   email: string;
+  verifiedEmails: string[];
   handle: string;
   name: string;
   avatarUrl: string;
@@ -364,7 +362,9 @@ export interface AuthUser {
   about: string;
   location: string;
   socials: { website: string; linkedin: string; twitter: string };
+  /** Only ever set by a verified claim — see the claim endpoints below. */
   rollno: string | null;
+  rollnoClaimedAt: string | null;
   platforms: Record<string, {
     username: string;
     verified: boolean;
@@ -388,19 +388,9 @@ export interface AuthUser {
   createdAt: string;
 }
 
-export interface AuthSession {
-  token: string;
-  user: AuthUser;
-}
-
-export async function signup(data: {
-  email: string; password: string; name: string; handle?: string; rollno?: string;
-}) {
-  return request<AuthSession>("/auth/signup", { method: "POST", body: JSON.stringify(data) });
-}
-
-export async function login(data: { email: string; password: string }) {
-  return request<AuthSession>("/auth/login", { method: "POST", body: JSON.stringify(data) });
+/** Whether this deployment has Clerk wired up, and the claim email domain. */
+export async function fetchAuthConfig() {
+  return request<{ clerkConfigured: boolean; instituteEmailDomain: string | null }>("/auth/config");
 }
 
 export async function fetchMe() {
@@ -411,25 +401,19 @@ export async function updateAccount(data: Partial<AuthUser> & { handle?: string 
   return request<{ user: AuthUser }>("/auth/me", { method: "PUT", body: JSON.stringify(data) });
 }
 
-export async function changePassword(data: { currentPassword?: string; newPassword: string }) {
-  return request<{ message: string }>("/auth/password", { method: "PUT", body: JSON.stringify(data) });
+/**
+ * Pulls the latest profile and social connections from Clerk immediately,
+ * instead of waiting for the `user.updated` webhook. Useful right after linking
+ * a provider, and in local development where webhooks cannot reach the server.
+ */
+export async function syncAccountFromClerk() {
+  return request<{ user: AuthUser }>("/auth/sync", { method: "POST" });
 }
 
 export async function checkHandle(handle: string) {
   return request<{ handle: string; available: boolean; reason: string | null }>(
     `/auth/check-handle?handle=${encodeURIComponent(handle)}`
   );
-}
-
-export async function fetchGithubAuthUrl(redirectUri?: string) {
-  return request<{ url: string }>(`/auth/github/url?${toQuery({ redirect_uri: redirectUri })}`);
-}
-
-export async function githubCallback(code: string) {
-  return request<AuthSession>("/auth/github/callback", {
-    method: "POST",
-    body: JSON.stringify({ code }),
-  });
 }
 
 export async function fetchExtensionToken() {
@@ -1178,4 +1162,99 @@ export async function fetchCScoreLeaderboard(params: { page?: number; limit?: nu
     }>;
     pagination: { page: number; limit: number; total: number; pages: number };
   }>(`/portfolio/leaderboard?${toQuery(params)}`);
+}
+
+
+// ---- Claiming a leaderboard profile ----
+
+/**
+ * The leaderboard's `Student` records predate accounts, so most have no owner.
+ * These endpoints let a signed-in user prove a roll number is theirs. See
+ * backend/services/claimService.js for the three proof paths.
+ */
+export interface ClaimProofOption {
+  platform: string;
+  label: string;
+  /** Masked so probing roll numbers cannot harvest someone's handles. */
+  maskedUsername: string;
+  verificationField: string;
+  /** True when this handle is already verified on the caller's portfolio. */
+  alreadyVerified: boolean;
+}
+
+export interface ClaimStatus {
+  rollno: string;
+  name: string;
+  branch: string;
+  year: number;
+  claimed: boolean;
+  isMine: boolean;
+  claimedBy: { handle: string; name: string } | null;
+  claimedAt: string | null;
+  proofOptions: ClaimProofOption[];
+  instituteEmail: { available: boolean; email?: string; domain?: string | null };
+  pendingClaim: {
+    platform: string;
+    code: string;
+    field: string;
+    expiresAt: string;
+  } | null;
+}
+
+export interface ClaimResult {
+  claimed: boolean;
+  method: string;
+  rollno: string;
+  message: string;
+}
+
+export async function fetchClaimStatus(rollno: string) {
+  return request<ClaimStatus>(`/claims/${encodeURIComponent(rollno)}`);
+}
+
+export async function fetchMyClaim() {
+  return request<{ claimed: boolean; student: any | null }>("/claims/mine");
+}
+
+/** Instant path: the record's handle is already verified on the portfolio. */
+export async function claimWithVerifiedPlatform(rollno: string, platform: string) {
+  return request<ClaimResult>(`/claims/${encodeURIComponent(rollno)}/claim-verified`, {
+    method: "POST",
+    body: JSON.stringify({ platform }),
+  });
+}
+
+/** Step 1 of the code path: issue a one-time code for a platform on the record. */
+export async function startClaim(rollno: string, platform: string) {
+  return request<{
+    rollno: string;
+    platform: string;
+    label: string;
+    maskedUsername: string;
+    code: string;
+    field: string;
+    expiresAt: string;
+    instructions: string;
+  }>(`/claims/${encodeURIComponent(rollno)}/start`, {
+    method: "POST",
+    body: JSON.stringify({ platform }),
+  });
+}
+
+/** Step 2: we read the platform profile back and look for the code. */
+export async function verifyClaim(rollno: string) {
+  return request<ClaimResult>(`/claims/${encodeURIComponent(rollno)}/verify`, { method: "POST" });
+}
+
+/** Fallback path: a Clerk-verified institute email plus a name match. */
+export async function claimWithInstituteEmail(rollno: string) {
+  return request<ClaimResult>(`/claims/${encodeURIComponent(rollno)}/claim-email`, {
+    method: "POST",
+  });
+}
+
+export async function releaseClaim(rollno: string) {
+  return request<{ released: boolean; rollno: string }>(`/claims/${encodeURIComponent(rollno)}`, {
+    method: "DELETE",
+  });
 }

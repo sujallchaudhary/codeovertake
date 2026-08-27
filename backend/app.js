@@ -19,6 +19,8 @@ const revisionRoutes = require('./routes/revision');
 const sheetRoutes = require('./routes/sheets');
 const companyRoutes = require('./routes/companies');
 const portfolioRoutes = require('./routes/portfolio');
+const claimRoutes = require('./routes/claims');
+const webhookRoutes = require('./routes/webhooks');
 
 const Meta = require('./models/Meta');
 
@@ -45,6 +47,13 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }));
 
+/**
+ * Webhooks are mounted BEFORE the JSON parser and receive the raw body, because
+ * Svix signatures are computed over the exact bytes Clerk sent. Parsing first
+ * would invalidate every signature.
+ */
+app.use('/api/webhooks', express.raw({ type: '*/*', limit: '1mb' }), webhookRoutes);
+
 // Body parsing. The limit is raised because sheet CSV imports and note content
 // are posted inline as text.
 app.use(express.json({ limit: '2mb' }));
@@ -65,6 +74,7 @@ app.use('/api/revision', revisionRoutes);
 app.use('/api/sheets', sheetRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/portfolio', portfolioRoutes);
+app.use('/api/claims', claimRoutes);
 
 // Health check
 app.get('/api/health', async (req, res, next) => {

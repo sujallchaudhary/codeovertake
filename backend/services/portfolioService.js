@@ -15,6 +15,7 @@ const {
   getVerificationField,
 } = require('../platforms/verification');
 const { retentionLabel } = require('../utils/spacedRepetition');
+const clerkService = require('./clerkService');
 
 /** Codolio-style on-demand sync: refresh when viewed, at most every 15 minutes. */
 const SYNC_COOLDOWN_MS = 15 * 60 * 1000;
@@ -251,8 +252,10 @@ async function verifyPlatform(user, platformKey) {
   if (!entry?.username) throw httpError(400, `Connect your ${platform.label} handle first`);
 
   if (platformKey === 'github') {
+    // Linking GitHub as a Clerk social connection already proves ownership, so
+    // there is no code to paste for this one.
     if (!user.githubAuth?.login) {
-      throw httpError(400, 'Connect GitHub with OAuth to verify the development pillar');
+      throw httpError(400, 'Connect GitHub from your account settings to verify the development pillar');
     }
     entry.verified = true;
     entry.verifiedAt = new Date();
@@ -302,8 +305,9 @@ async function removePlatform(user, platformKey) {
   user.platforms[platformKey].lastFetchedAt = null;
 
   if (platformKey === 'github') {
+    // The OAuth grant itself lives in Clerk; unlinking it there is a separate
+    // action in the Clerk-managed account screen.
     user.githubAuth.login = '';
-    user.githubAuth.accessToken = '';
     user.githubAuth.connectedAt = null;
   }
 
@@ -334,17 +338,25 @@ function listPortfolioPlatforms() {
  * Uses the stored OAuth token when available (higher rate limit + private repos).
  */
 async function listGithubRepos(userId) {
-  const user = await User.findById(userId).select('+githubAuth.accessToken');
+  const user = await User.findById(userId);
   if (!user) throw httpError(404, 'Account not found');
 
   const login = user.githubAuth?.login || user.platforms?.github?.username;
   if (!login) throw httpError(400, 'Connect your GitHub account first');
 
+  // Read the OAuth token from Clerk on demand rather than storing one, so a
+  // database dump never contains usable GitHub credentials.
+  const oauthToken = user.clerkUserId
+    ? await clerkService.getOauthAccessToken(user.clerkUserId, 'github')
+    : null;
+
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'CodeOvertake/1.0' };
-  const token = user.githubAuth?.accessToken || process.env.GITHUB_TOKEN;
+  const token = oauthToken || process.env.GITHUB_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const url = user.githubAuth?.accessToken
+  // With the user's own token we can list private repos too; without it we fall
+  // back to their public repos via the server token.
+  const url = oauthToken
     ? 'https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner'
     : `https://api.github.com/users/${login}/repos?per_page=100&sort=updated`;
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router";
 import {
   BarChart3, Brain, Briefcase, Code2, FileText, Github, Globe, LayoutList, Linkedin,
-  ListChecks, LogOut, Menu, Settings, Swords, Trophy, User, X, Zap,
+  ListChecks, LogOut, Menu, Settings, ShieldCheck, Swords, Trophy, User, X, Zap,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 
@@ -28,12 +28,13 @@ const accountLinks = [
   { to: "/portfolio", label: "My Portfolio", icon: <User className="h-3.5 w-3.5" /> },
   { to: "/revision", label: "Daily Revision", icon: <Brain className="h-3.5 w-3.5" /> },
   { to: "/notes", label: "My Notes", icon: <FileText className="h-3.5 w-3.5" /> },
+  { to: "/claim", label: "Claim Roll Number", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
   { to: "/settings", label: "Edit Profile", icon: <Settings className="h-3.5 w-3.5" /> },
 ];
 
 export function Layout() {
   const location = useLocation();
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, signOut } = useAuth();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -160,7 +161,7 @@ export function Layout() {
                         </Link>
                       ))}
                       <button
-                        onClick={logout}
+                        onClick={signOut}
                         className="flex w-full items-center gap-2 border-t border-[#1e1e1e] px-3 py-2 font-['Archivo'] text-sm text-[#888888] transition-colors hover:bg-[#1a1a1a] hover:text-[#ff6666]"
                       >
                         <LogOut className="h-3.5 w-3.5" />
@@ -238,7 +239,7 @@ export function Layout() {
                     </Link>
                   ))}
                   <button
-                    onClick={logout}
+                    onClick={signOut}
                     className="flex items-center gap-2.5 rounded px-3 py-2.5 text-left text-sm text-[#888888] transition-colors hover:bg-[#111111] hover:text-[#ff6666]"
                   >
                     <LogOut className="h-3.5 w-3.5" />

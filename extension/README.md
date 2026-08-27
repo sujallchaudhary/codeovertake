@@ -27,10 +27,13 @@ InterviewBit, Code360 (Naukri / Coding Ninjas) and SPOJ.
 
 Firefox works the same way via `about:debugging` → **Load Temporary Add-on**.
 
-## Why a pairing token instead of a login?
+## Why a pairing token instead of signing in?
 
-The extension cannot refresh a short-lived session JWT, so it authenticates with
-a long-lived token scoped to your account. It is accepted by the same
-`requireAuth` middleware as a normal session (see
-`backend/middlewares/auth.js`). Rotating the token from the web app immediately
-invalidates every existing install.
+The web app authenticates with Clerk, whose session tokens are short-lived and
+refreshed inside a browser page context that an extension service worker does not
+have. So the extension uses a long-lived token scoped to your account instead.
+
+It is accepted by the same `requireAuth` middleware as a Clerk session — see
+`resolveUserFromToken` in `backend/middlewares/auth.js`, which takes either
+credential type. Rotating the token from the web app immediately invalidates
+every existing install.
