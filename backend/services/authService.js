@@ -46,6 +46,24 @@ function applyClerkFields(user, clerkUser) {
   if (!user.nameOverridden) user.name = clerkService.displayNameOf(clerkUser);
   if (!user.avatarOverridden && clerkUser.imageUrl) user.avatarUrl = clerkUser.imageUrl;
 
+  /**
+   * Admin status is recomputed on every sync so that removing someone from
+   * ADMIN_EMAILS, or clearing their Clerk role, actually revokes access.
+   *
+   * A manual promotion from the admin panel is preserved: `adminGrantedManually`
+   * marks it so a sync does not undo it.
+   */
+  const adminEmails = String(process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  // Only *verified* addresses count, otherwise adding an unverified admin email
+  // to your own Clerk account would be enough to self-promote.
+  const byEmail = user.verifiedEmails.some((address) => adminEmails.includes(address));
+  const byClerkRole = String(clerkUser.publicMetadata?.role || '').toLowerCase() === 'admin';
+  user.isAdmin = byEmail || byClerkRole || Boolean(user.adminGrantedManually);
+
   // A linked GitHub social connection is itself proof of ownership, so it
   // verifies the development pillar without a manual code.
   const github = clerkService.externalAccountsOf(clerkUser).find((a) => a.provider === 'github');

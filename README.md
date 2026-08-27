@@ -104,6 +104,12 @@ and a recruiter-ready portfolio.
   workspace — as solved, starred, tagged, into a sheet, with a note. See
   [`extension/README.md`](extension/README.md)
 
+### Admin panel
+
+- `/admin` for maintainers: students, accounts, claims, content and background
+  jobs, with an append-only audit log behind every privileged action. See
+  [Admin panel](#admin-panel) for the access model.
+
 ## Tech Stack
 
 | Component | Technology |
@@ -135,7 +141,8 @@ codeovertake/
 │   │   ├── RevisionLog.js        # Append-only revision history
 │   │   ├── Sheet.js              # Sheets with topic/subtopic hierarchy
 │   │   ├── SheetFollow.js        # Follow-to-track join
-│   │   └── Contest.js            # Aggregated contest schedule
+│   │   ├── Contest.js            # Aggregated contest schedule
+│   │   └── AuditLog.js           # Append-only record of every privileged action
 │   ├── platforms/                # Stats adapters (registry, two-tier)
 │   │   ├── github.js  leetcode.js  codeforces.js  codechef.js
 │   │   ├── atcoder.js            # Portfolio-only, full stats
@@ -151,21 +158,29 @@ codeovertake/
 │   │   ├── portfolioService.js
 │   │   ├── problemService.js  workspaceService.js  noteService.js
 │   │   ├── revisionService.js  sheetService.js  companyService.js
-│   │   └── contestService.js
+│   │   ├── contestService.js
+│   │   └── adminService.js       # Every admin operation + the job registry
 │   ├── controllers/              # Thin route handlers
 │   ├── routes/                   # Express routes + validators
 │   ├── middlewares/              # Errors, validation, async wrapper, auth
+│   │   └── adminAuth.js          # Admin session OR constant-time shared secret
 │   ├── utils/
 │   │   ├── problemUrl.js         # Problem URL parsing for 11 platforms
 │   │   ├── spacedRepetition.js   # Scheduling + memory-decay maths (pure)
+│   │   ├── audit.js              # Writes AuditLog entries
+│   │   ├── cors.js  mongoUri.js  # Origin allowlist; per-PR database naming
 │   │   ├── csv.js  concurrency.js  httpError.js
 │   ├── cron/updateData.js        # Parallel batch data fetcher
 │   ├── scripts/
 │   │   ├── seedContent.js        # Curated sheets + company kits
 │   │   ├── data/                 # Sheet and company-kit definitions
+│   │   ├── previewDb.js          # Per-PR database URI / name / drop
 │   │   └── runUpdate.js          # Manual data refresh trigger
+│   ├── test/                     # run.js aggregator + 5 suites (343 checks)
 │   ├── server.js                 # Express server entry
 │   └── .env.example
+├── .github/workflows/            # ci.yml, pr preview, cleanup, production deploy
+├── deploy/                       # preview-up/down + production-up (with rollback)
 ├── extension/                    # Manifest V3 browser extension
 │   ├── manifest.json  background.js  shared.js
 │   ├── popup.html  popup.js  popup.css
@@ -194,7 +209,13 @@ codeovertake/
                 ├── Portfolio.tsx  EditProfile.tsx
                 ├── Contests.tsx      # Calendar + list + filters
                 ├── TrackerUI.tsx     # Shared badges, gates, helpers
-                └── PlatformIcons.tsx # SVG platform icons
+                ├── PlatformIcons.tsx # SVG platform icons
+                └── admin/            # Admin panel
+                    ├── Admin.tsx         # Role-gated shell + tab nav
+                    ├── AdminUI.tsx       # DataTable, Pager, ConfirmButton, ...
+                    ├── AdminOverview.tsx  AdminStudents.tsx  AdminUsers.tsx
+                    ├── AdminClaims.tsx   AdminContent.tsx
+                    └── AdminJobs.tsx     AdminAudit.tsx
 ```
 
 ## Setup
@@ -242,6 +263,10 @@ Runs on `http://localhost:5173`.
 | `CLERK_WEBHOOK_SECRET` | Svix signing secret for the Clerk webhook | Recommended |
 | `INSTITUTE_EMAIL_DOMAIN` | e.g. `nsut.ac.in`. Enables the email path for claiming | No |
 | `CONTEST_CRON_SCHEDULE` | Cron expression for contest sync | No (default: every 6h) |
+| `ADMIN_EMAILS` | Comma-separated verified emails granted admin on sign-in | Recommended |
+| `ADMIN_SECRET` | Shared secret for `x-admin-secret`; for scripts and cron only | No |
+| `DISABLE_CRON` | `true` skips the recurring schedules (used by PR previews) | No |
+| `ALLOWED_ORIGINS` | Extra CORS origins, comma-separated; `*` matches one label | No |
 
 Frontend (`frontend/.env`):
 
@@ -319,6 +344,82 @@ Because `rollno` is what links a portfolio to a leaderboard ranking, it is no
 longer a free-text field on the profile form — it is only ever written by a
 verified claim.
 
+## Admin panel
+
+`/admin` in the frontend, behind `User.isAdmin`. Everything in it is logged.
+
+### Becoming an admin
+
+There are three routes in, in the order you will need them:
+
+1. **`ADMIN_EMAILS`** — a comma-separated list on the backend. Any account whose
+   *Clerk-verified* email appears in it gets `isAdmin` on its next sign-in. This
+   is the bootstrap: the first admin has to come from outside the app. Only
+   verified addresses count, so adding someone else's email to your own Clerk
+   account does not promote you.
+2. **Clerk public metadata** — set `{"role": "admin"}` on the user in the Clerk
+   dashboard. Useful when you would rather not redeploy to change the list.
+3. **Promotion from the panel** — an existing admin flips someone in
+   *Accounts → Make admin*. This sets `adminGrantedManually`, so the recomputation
+   that happens on every Clerk sync does not silently undo it.
+
+Both 1 and 2 are recomputed on every sync, which means **removing** someone from
+`ADMIN_EMAILS` or clearing their Clerk role actually revokes their access. A
+manual promotion has to be revoked manually.
+
+Guard rails: you cannot demote, suspend or delete yourself, you cannot suspend or
+delete an admin without demoting them first, and you cannot remove the last
+remaining admin.
+
+### What it manages
+
+| Tab | What you can do |
+|-----|-----------------|
+| Overview | Counts, claim-adoption rate, last cron/contest-sync times, top students, recent admin activity |
+| Students | Search, inspect snapshots, edit handles **bypassing the 24h cooldown and the ownership check**, force a stats refresh, delete a record and its snapshots |
+| Accounts | Search, promote/demote, suspend/restore, delete the local record |
+| Claims | See who owns which roll number, reassign a claim to another handle, or release it |
+| Content | Curate/uncurate sheets, edit or refresh problem metadata, delete problems, sheets and contests |
+| Jobs | Trigger the same work the cron scheduler does: student refresh, ranking recalculation, contest sync, analytics rebuild |
+| Audit | Filter by action, target type or exact target id; expand the metadata diff for any entry; export a page as JSON |
+
+### Audit log
+
+Every privileged write goes through `utils/audit.js` into the `AuditLog`
+collection, recording actor, action, target, a metadata diff and the outcome.
+Entries are never edited or deleted by the app.
+
+The actor is the signed-in admin's `User` document. If a call authenticated with
+`x-admin-secret` instead there is no user to point at, so the entry is attributed
+to `secret` and the panel flags it — a shared secret is inherently
+unattributable, which is why it exists for scripts and cron rather than for
+people.
+
+### Jobs are progress reporting, not a queue
+
+Job state is per-process and in memory. A restart or a deploy clears the list,
+and behind more than one instance you only see the one you happen to be talking
+to. A second copy of a running job is refused, because two concurrent full
+student refreshes would double the load on every platform API and race on the
+same documents. The *start* of a job is always written to the audit log, so the
+record survives the restart even though the status does not.
+
+### Access model
+
+Both authentication paths live in a single middleware (`middlewares/adminAuth.js`)
+so a route cannot accidentally accept only the weaker one:
+
+- a signed-in, non-suspended `isAdmin` account, or
+- the `x-admin-secret` header, compared in constant time.
+
+An anonymous call is `401`; a call that authenticated but is not allowed is `403`.
+A **valid non-admin session does not fall through to the secret check** — it is
+answered `403` directly, so the reason is unambiguous. The panel router is rate
+limited at 300 requests / 15 min, and job triggers separately at 10 / 15 min.
+
+Hiding the nav link for non-admins is a convenience, not a control: the route
+re-checks with `/api/admin/whoami` on mount and every endpoint re-checks the role.
+
 ## API Endpoints
 
 | Method | Endpoint | Description |
@@ -394,6 +495,30 @@ Sign-up and sign-in have no endpoints here — Clerk handles them in the fronten
 | GET | `/api/portfolio/leaderboard` | C-Score leaderboard (verified only) |
 | GET | `/api/contests` · `/upcoming` · `/calendar` | Contest tracker |
 
+### Admin
+
+All of these require an admin session or `x-admin-secret`, and all writes are audited.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/whoami` | Whether the caller is an admin, and how they authenticated |
+| GET | `/api/admin/overview` | Counts, claim adoption, job times, recent activity |
+| GET | `/api/admin/students` · `/:rollno` | Search students; one record plus its snapshots |
+| PUT | `/api/admin/students/:rollno` | Edit handles, bypassing the cooldown and ownership check |
+| POST | `/api/admin/students/:rollno/refresh` | Refetch every platform for one student |
+| DELETE | `/api/admin/students/:rollno` | Delete a record and its snapshots |
+| GET | `/api/admin/users` · `/:handle` | Search accounts; one account plus activity counts |
+| PUT | `/api/admin/users/:handle/admin` · `/suspend` | Promote/demote, suspend/restore |
+| DELETE | `/api/admin/users/:handle` | Delete the local record (not the Clerk account) |
+| GET | `/api/admin/claims` | Who owns which roll number, plus pending claims |
+| POST | `/api/admin/claims/:rollno/reassign` | Reassign a claim; omit the handle to release it |
+| GET/PUT/DELETE | `/api/admin/problems[/:id]` | Problem catalog; `POST /:id/refresh` refetches metadata |
+| GET/DELETE | `/api/admin/sheets[/:idOrSlug]` | `PUT /:idOrSlug/curated` toggles curation |
+| GET/DELETE | `/api/admin/contests[/:id]` | Contest records |
+| GET | `/api/admin/jobs` | Job registry with live status |
+| POST | `/api/admin/jobs/:name/run` | Start a job (10 / 15 min) |
+| GET | `/api/admin/audit` | Audit log, filterable by action, target type and target id |
+
 ## Scoring System
 
 Each platform contributes up to **1000 points** (max total: 4000). Exponential curves reward early effort; linear scaling for ratings.
@@ -465,7 +590,7 @@ Three workflows in `.github/workflows/`:
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | every PR, pushes to `master` | Lint + 266 tests, frontend typecheck + build, both Docker images build. On a PR it then deploys a beta preview. |
+| `ci.yml` | every PR, pushes to `master` | Lint + 343 tests, frontend typecheck + build, both Docker images build. On a PR it then deploys a beta preview. |
 | `pr-cleanup.yml` | PR closed or merged | Removes the preview container, drops its database, deletes the image tag. |
 | `deploy.yml` | CI succeeds on `master` | Builds, pushes, deploys production, health-checks, rolls back on failure. |
 
@@ -556,8 +681,9 @@ the required status check either way.
 ### Tests
 
 ```bash
-npm test --prefix backend            # all 266
+npm test --prefix backend            # all 343
 npm test --prefix backend -- units   # just the fast pure-function suite
+npm test --prefix backend -- admin   # just the admin panel suite
 npm run lint --prefix backend        # parse every file
 npm run typecheck --prefix frontend
 ```

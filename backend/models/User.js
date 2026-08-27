@@ -186,6 +186,26 @@ const userSchema = new mongoose.Schema({
   extensionToken: { type: String, default: '', select: false },
 
   isPublic: { type: Boolean, default: true },
+
+  /**
+   * Admin access to the management panel.
+   *
+   * Granted either by listing the address in ADMIN_EMAILS, or by setting
+   * `publicMetadata.role = "admin"` in Clerk, or by an existing admin promoting
+   * the account. Recomputed on every Clerk sync (see authService.applyClerkFields)
+   * so revoking in Clerk or the env list actually takes effect.
+   */
+  isAdmin: { type: Boolean, default: false, index: true },
+  /** Set when an admin promoted this account from the panel, so Clerk syncs keep it. */
+  adminGrantedManually: { type: Boolean, default: false },
+
+  /**
+   * Suspended accounts keep their data but cannot authenticate, so moderation
+   * does not require destroying someone's workspace.
+   */
+  suspended: { type: Boolean, default: false, index: true },
+  suspendedReason: { type: String, default: '' },
+  suspendedAt: { type: Date, default: null },
 }, {
   timestamps: true,
 });

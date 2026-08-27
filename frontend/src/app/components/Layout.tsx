@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router";
 import {
   BarChart3, Brain, Briefcase, Code2, FileText, Github, Globe, LayoutList, Linkedin,
-  ListChecks, LogOut, Menu, Settings, ShieldCheck, Swords, Trophy, User, X, Zap,
+  ListChecks, LogOut, Menu, Settings, ShieldAlert, ShieldCheck, Swords, Trophy, User, X, Zap,
 } from "lucide-react";
 import { useAuth } from "../AuthContext";
 
@@ -32,9 +32,21 @@ const accountLinks = [
   { to: "/settings", label: "Edit Profile", icon: <Settings className="h-3.5 w-3.5" /> },
 ];
 
+/**
+ * Appended for maintainers only. Hiding it is a convenience, not a control — the
+ * route and every endpoint behind it re-check the role server-side.
+ */
+const adminLink = {
+  to: "/admin",
+  label: "Admin Panel",
+  icon: <ShieldAlert className="h-3.5 w-3.5" />,
+};
+
 export function Layout() {
   const location = useLocation();
   const { user, isAuthenticated, signOut } = useAuth();
+
+  const personalLinks = user?.isAdmin ? [...accountLinks, adminLink] : accountLinks;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -150,7 +162,7 @@ export function Layout() {
                           C-Score {user?.cScore?.total ?? 0}
                         </div>
                       </div>
-                      {accountLinks.map((link) => (
+                      {personalLinks.map((link) => (
                         <Link
                           key={link.to}
                           to={link.to}
@@ -224,7 +236,7 @@ export function Layout() {
                   <div className="px-3 py-2 font-['JetBrains_Mono'] text-[10px] uppercase tracking-widest text-[#555555]">
                     {user?.name} · /u/{user?.handle}
                   </div>
-                  {accountLinks.map((link) => (
+                  {personalLinks.map((link) => (
                     <Link
                       key={link.to}
                       to={link.to}

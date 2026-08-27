@@ -292,8 +292,27 @@ const BACKEND = path.join(__dirname, '..');
     check('admin can assign a profile to a handle',
       r.status === 200 && r.body.claimedBy === 'carol', JSON.stringify(r.body));
 
+    /*
+     * No credentials at all is 401, a wrong credential is 403. The middleware
+     * used to answer 403 for both; separating them is deliberate, because "you
+     * did not authenticate" and "you authenticated and still may not" need
+     * different fixes on the caller's side.
+     */
     r = await api('POST', '/claims/2023UCS5678/admin-reassign', { body: { handle: 'carol' } });
-    check('admin reassign requires the admin secret', r.status === 403, `got ${r.status}`);
+    check('admin reassign rejects an anonymous caller', r.status === 401, `got ${r.status}`);
+
+    r = await api('POST', '/claims/2023UCS5678/admin-reassign', {
+      body: { handle: 'carol' },
+      headers: { 'x-admin-secret': 'wrong-secret-same-len' },
+    });
+    check('admin reassign rejects a wrong secret', r.status === 403, `got ${r.status}`);
+
+    r = await api('POST', '/claims/2023UCS5678/admin-reassign', {
+      body: { handle: 'carol' },
+      headers: { 'x-admin-secret': 'test-admin-secre' },
+    });
+    check('admin reassign rejects a shorter secret without throwing',
+      r.status === 403, `got ${r.status}`);
 
     r = await api('POST', '/claims/2023UCS5678/admin-reassign', {
       body: {},

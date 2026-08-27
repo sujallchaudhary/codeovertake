@@ -385,6 +385,13 @@ export interface AuthUser {
     totalRevisions: number;
   };
   isPublic: boolean;
+  /**
+   * Recomputed server-side on every Clerk sync from ADMIN_EMAILS, the Clerk
+   * `role` public metadata and manual promotions. Used only to decide whether to
+   * show the admin nav — every admin endpoint re-checks it.
+   */
+  isAdmin?: boolean;
+  suspended?: boolean;
   createdAt: string;
 }
 
@@ -1257,4 +1264,262 @@ export async function releaseClaim(rollno: string) {
   return request<{ released: boolean; rollno: string }>(`/claims/${encodeURIComponent(rollno)}`, {
     method: "DELETE",
   });
+}
+
+
+/* ==========================================================================
+ * Admin panel
+ *
+ * Every endpoint here requires an admin account (User.isAdmin). The backend also
+ * accepts an x-admin-secret header for scripts, but the panel always uses the
+ * session so actions are attributed to a real person in the audit log.
+ * ========================================================================== */
+
+export interface Paginated<T> {
+  pagination: { page: number; limit: number; total: number; pages: number };
+}
+
+export interface AdminOverview {
+  students: {
+    total: number; claimed: number; unclaimed: number; claimedPercent: number;
+  };
+  users: { total: number; admins: number; suspended: number };
+  content: {
+    problems: number; trackedQuestions: number; notes: number;
+    sheets: number; curatedSheets: number; contests: number; upcomingContests: number;
+  };
+  jobs: { lastCronRun: string | null; lastContestSync: string | null; running: AdminJob[] };
+  topStudents: Array<{
+    rollno: string; name: string; branch: string; year: number;
+    scores: { total: number }; ranks: { overall: number };
+  }>;
+  recentAudit: AuditEntry[];
+}
+
+export interface AdminJob {
+  name: string;
+  label: string;
+  description: string;
+  status: 'idle' | 'running' | 'succeeded' | 'failed';
+  startedAt?: string;
+  finishedAt?: string;
+  result?: Record<string, any>;
+  error?: string;
+}
+
+export interface AuditEntry {
+  _id: string;
+  actor: { handle: string; name: string } | null;
+  actorLabel: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  metadata: Record<string, any>;
+  outcome: string;
+  createdAt: string;
+}
+
+export interface AdminStudentRow {
+  rollno: string;
+  name: string;
+  branch: string;
+  year: number;
+  scores: Record<string, number>;
+  ranks: Record<string, number>;
+  claimedBy: { handle: string; name: string } | null;
+  claimedAt: string | null;
+  lastEditedAt: string | null;
+  updatedAt: string;
+}
+
+export interface AdminUserRow {
+  _id: string;
+  handle: string;
+  name: string;
+  email: string;
+  rollno: string | null;
+  isAdmin: boolean;
+  suspended: boolean;
+  cScore: { total: number };
+  createdAt: string;
+}
+
+/** Tells the frontend whether the signed-in account may see the admin nav. */
+export async function fetchAdminWhoami() {
+  return request<{ isAdmin: boolean; viaSecret: boolean; handle: string | null }>("/admin/whoami");
+}
+
+export async function fetchAdminOverview() {
+  return request<AdminOverview>("/admin/overview");
+}
+
+// ---- Students ----
+
+export async function fetchAdminStudents(params: Record<string, unknown> = {}) {
+  return request<Paginated<AdminStudentRow> & { students: AdminStudentRow[] }>(
+    `/admin/students?${toQuery(params)}`
+  );
+}
+
+export async function fetchAdminStudent(rollno: string) {
+  return request<{ student: any; snapshots: any[] }>(
+    `/admin/students/${encodeURIComponent(rollno)}`
+  );
+}
+
+/** Bypasses both the 24h cooldown and the ownership check, and is audited. */
+export async function updateAdminStudent(rollno: string, data: Record<string, unknown>) {
+  return request<{ student: any }>(`/admin/students/${encodeURIComponent(rollno)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function refreshAdminStudent(rollno: string) {
+  return request<{ student: any; platforms: Record<string, string> }>(
+    `/admin/students/${encodeURIComponent(rollno)}/refresh`,
+    { method: "POST" }
+  );
+}
+
+export async function deleteAdminStudent(rollno: string) {
+  return request<{ deleted: boolean; snapshotsDeleted: number }>(
+    `/admin/students/${encodeURIComponent(rollno)}`,
+    { method: "DELETE" }
+  );
+}
+
+// ---- Users ----
+
+export async function fetchAdminUsers(params: Record<string, unknown> = {}) {
+  return request<Paginated<AdminUserRow> & { users: AdminUserRow[] }>(
+    `/admin/users?${toQuery(params)}`
+  );
+}
+
+export async function fetchAdminUser(handle: string) {
+  return request<{ user: AuthUser; activity: Record<string, number> }>(
+    `/admin/users/${encodeURIComponent(handle)}`
+  );
+}
+
+export async function setAdminUserRole(handle: string, isAdmin: boolean) {
+  return request<{ user: AuthUser }>(`/admin/users/${encodeURIComponent(handle)}/admin`, {
+    method: "PUT",
+    body: JSON.stringify({ isAdmin }),
+  });
+}
+
+export async function setAdminUserSuspended(handle: string, suspended: boolean, reason = "") {
+  return request<{ user: AuthUser }>(`/admin/users/${encodeURIComponent(handle)}/suspend`, {
+    method: "PUT",
+    body: JSON.stringify({ suspended, reason }),
+  });
+}
+
+export async function deleteAdminUser(handle: string) {
+  return request<{ deleted: boolean }>(`/admin/users/${encodeURIComponent(handle)}`, {
+    method: "DELETE",
+  });
+}
+
+// ---- Claims ----
+
+export async function fetchAdminClaims(params: Record<string, unknown> = {}) {
+  return request<{
+    claims: Array<{
+      rollno: string; name: string; branch: string; year: number;
+      claimedBy: { handle: string; name: string; email: string } | null;
+      claimedAt: string;
+    }>;
+    pending: Array<{ rollno: string; name: string; pendingClaim: any }>;
+    pagination: { page: number; limit: number; total: number; pages: number };
+  }>(`/admin/claims?${toQuery(params)}`);
+}
+
+/** Pass no handle to release the claim entirely. */
+export async function reassignAdminClaim(rollno: string, handle?: string) {
+  return request<{ rollno: string; claimedBy: string | null }>(
+    `/admin/claims/${encodeURIComponent(rollno)}/reassign`,
+    { method: "POST", body: JSON.stringify(handle ? { handle } : {}) }
+  );
+}
+
+// ---- Problems ----
+
+export async function fetchAdminProblems(params: Record<string, unknown> = {}) {
+  return request<{ problems: Problem[]; pagination: any }>(`/admin/problems?${toQuery(params)}`);
+}
+
+export async function updateAdminProblem(id: string, data: Record<string, unknown>) {
+  return request<{ problem: Problem }>(`/admin/problems/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function refreshAdminProblem(id: string) {
+  return request<{ problem: Problem }>(`/admin/problems/${id}/refresh`, { method: "POST" });
+}
+
+export async function deleteAdminProblem(id: string) {
+  return request<{ deleted: boolean }>(`/admin/problems/${id}`, { method: "DELETE" });
+}
+
+// ---- Sheets ----
+
+export async function fetchAdminSheets(params: Record<string, unknown> = {}) {
+  return request<{ sheets: SheetSummary[]; pagination: any }>(`/admin/sheets?${toQuery(params)}`);
+}
+
+export async function setAdminSheetCurated(
+  idOrSlug: string,
+  isCurated: boolean,
+  category?: string
+) {
+  return request<{ sheet: any }>(`/admin/sheets/${encodeURIComponent(idOrSlug)}/curated`, {
+    method: "PUT",
+    body: JSON.stringify({ isCurated, category }),
+  });
+}
+
+export async function deleteAdminSheet(idOrSlug: string) {
+  return request<{ deleted: boolean; followersRemoved: number }>(
+    `/admin/sheets/${encodeURIComponent(idOrSlug)}`,
+    { method: "DELETE" }
+  );
+}
+
+// ---- Contests ----
+
+export async function fetchAdminContests(params: Record<string, unknown> = {}) {
+  return request<{ contests: Contest[]; pagination: any }>(`/admin/contests?${toQuery(params)}`);
+}
+
+export async function deleteAdminContest(id: string) {
+  return request<{ deleted: boolean }>(`/admin/contests/${id}`, { method: "DELETE" });
+}
+
+// ---- Jobs ----
+
+export async function fetchAdminJobs() {
+  return request<{ jobs: AdminJob[] }>("/admin/jobs");
+}
+
+export async function runAdminJob(name: string) {
+  return request<{ started: boolean; job: string; label: string }>(
+    `/admin/jobs/${encodeURIComponent(name)}/run`,
+    { method: "POST" }
+  );
+}
+
+// ---- Audit ----
+
+export async function fetchAdminAudit(params: Record<string, unknown> = {}) {
+  return request<{
+    entries: AuditEntry[];
+    actions: string[];
+    pagination: { page: number; limit: number; total: number; pages: number };
+  }>(`/admin/audit?${toQuery(params)}`);
 }

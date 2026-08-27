@@ -20,6 +20,7 @@ import { SheetDetail } from "./components/SheetDetail";
 import { Companies, CompanyKit } from "./components/Companies";
 import { Portfolio } from "./components/Portfolio";
 import { EditProfile } from "./components/EditProfile";
+import { Admin } from "./components/admin/Admin";
 
 export const router = createBrowserRouter([
   {
@@ -65,6 +66,9 @@ export const router = createBrowserRouter([
       { path: "portfolio", Component: Portfolio },
       { path: "u/:handle", Component: Portfolio },
       { path: "settings", Component: EditProfile },
+
+      // Maintainer panel. The component checks the role, and so does every endpoint.
+      { path: "admin", Component: Admin },
     ],
   },
 ]);

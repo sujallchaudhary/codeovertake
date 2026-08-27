@@ -50,6 +50,14 @@ async function requireAuth(req, res, next) {
     if (!user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
+    // Suspended accounts keep their data but lose access
+    if (user.suspended) {
+      return res.status(403).json({
+        error: user.suspendedReason
+          ? `Your account has been suspended: ${user.suspendedReason}`
+          : 'Your account has been suspended',
+      });
+    }
     req.user = user;
     req.userId = String(user._id);
     return next();
@@ -72,7 +80,9 @@ async function requireAuth(req, res, next) {
 async function optionalAuth(req, res, next) {
   try {
     const user = await resolveUserFromToken(extractBearer(req));
-    if (user) {
+    // A suspended account is treated as anonymous here rather than blocked, so
+    // public pages still render for them.
+    if (user && !user.suspended) {
       req.user = user;
       req.userId = String(user._id);
     }
